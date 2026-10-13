@@ -1,34 +1,13 @@
 <br/>
 
-> [!IMPORTANT]
-> ## macSCP has evolved into [AnySCP](https://github.com/macnev2013/anySCP) 🎉
->
-> macSCP is no longer actively maintained. After hitting limitations with macOS-only support, OS-specific bugs, and the difficulty of maintaining a SwiftUI-only codebase, I rebuilt the app from scratch as **[AnySCP](https://github.com/macnev2013/anySCP)** — a cross-platform desktop client that runs on **macOS, Windows, and Linux**.
->
-> AnySCP includes everything macSCP offered and much more:
-> - **Cross-platform** — runs natively on macOS, Windows, and Linux
-> - **Split terminal panes** — horizontal and vertical splits within SSH sessions
-> - **SSH port forwarding** — local and remote tunnels with service presets
-> - **Command snippets** — save and organize frequently used commands with parameterized templates
-> - **Drag-and-drop uploads** — drop files directly into the remote file browser or S3 bucket
-> - **Concurrent transfers** — parallel file transfers with real-time progress, speed, and ETA
-> - **VS Code integration** — edit remote files in VS Code with automatic re-upload on save
-> - **Privacy-first** — credentials stored in your OS keychain, fully offline, no account required
->
-> **👉 [Download AnySCP](https://github.com/macnev2013/anySCP/releases)**
->
-> Thank you to everyone who used and supported macSCP!
-
-<br/>
-
 <p align="center">
-  <img src="screens/logo.png" alt="macSCP Logo" width="200"/>
+  <img src="screens/logo.png" alt="macSCP-Revived Logo" width="200"/>
 </p>
 
-<h1 align="center">macSCP</h1>
+<h1 align="center">macSCP-Revived</h1>
 
 <p align="center">
-  <strong>⚠️ Deprecated — see <a href="https://github.com/macnev2013/anySCP">AnySCP</a> for the actively maintained successor</strong>
+  <strong>Native macOS SFTP · S3 · SSH terminal — community-maintained continuation of <a href="https://github.com/macnev2013/macSCP">macSCP</a></strong>
 </p>
 
 <p align="center">
@@ -41,17 +20,18 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/macnev2013/macSCP/releases"><img src="https://img.shields.io/github/v/release/macnev2013/macSCP" alt="Release"/></a>
-  <a href="https://github.com/macnev2013/macSCP/releases"><img src="https://img.shields.io/github/downloads/macnev2013/macSCP/total" alt="Downloads"/></a>
+  <a href="https://github.com/onlymykazari/macSCP-Revived/releases"><img src="https://img.shields.io/github/v/release/onlymykazari/macSCP-Revived" alt="Release"/></a>
+  <a href="https://github.com/onlymykazari/macSCP-Revived/releases"><img src="https://img.shields.io/github/downloads/onlymykazari/macSCP-Revived/total" alt="Downloads"/></a>
+  <a href="https://github.com/onlymykazari/homebrew-tap"><img src="https://img.shields.io/badge/homebrew-tap-orange?logo=homebrew" alt="Homebrew Tap"/></a>
   <img src="https://img.shields.io/badge/macOS-15.0%2B-blue?logo=apple" alt="macOS 15.0+"/>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-CC0--1.0-green" alt="License CC0"/></a>
-  <a href="https://github.com/macnev2013/macSCP/stargazers"><img src="https://img.shields.io/github/stars/macnev2013/macSCP?style=social" alt="Stars"/></a>
+  <a href="https://github.com/onlymykazari/macSCP-Revived/stargazers"><img src="https://img.shields.io/github/stars/onlymykazari/macSCP-Revived?style=social" alt="Stars"/></a>
 </p>
 
 ---
 
 <p align="center">
-  <img src="screens/screen-1.png" alt="macSCP Connection Manager" width="800"/>
+  <img src="screens/screen-1.png" alt="macSCP-Revived Connection Manager" width="800"/>
 </p>
 <p align="center"><em>Manage SFTP servers, S3 buckets, and SSH terminals from one native macOS app.</em></p>
 
@@ -59,11 +39,13 @@
 
 ## Overview
 
-macSCP is a modern, native macOS application built with SwiftUI that provides seamless file management for SFTP servers, Amazon S3 storage, and integrated SSH terminal access. With its intuitive interface and powerful features, macSCP makes managing remote servers and cloud storage as easy as working with local files.
+The original [macSCP](https://github.com/macnev2013/macSCP) is no longer maintained — its author moved on to a cross-platform rewrite. **macSCP-Revived** picks up the native-SwiftUI macOS lineage: same app, actively maintained, with its own releases, versioning, and Homebrew distribution.
 
-## How macSCP Compares
+macSCP-Revived is a modern, native macOS application built with SwiftUI that provides seamless file management for SFTP servers, Amazon S3 storage, and integrated SSH terminal access. With its intuitive interface and powerful features, it makes managing remote servers and cloud storage as easy as working with local files.
 
-| Feature | macSCP | Cyberduck | Transmit | FileZilla |
+## How macSCP-Revived Compares
+
+| Feature | macSCP-Revived | Cyberduck | Transmit | FileZilla |
 |---------|--------|-----------|----------|-----------|
 | Native SwiftUI | Yes | No (Java) | Yes (AppKit) | No (wxWidgets) |
 | SFTP | Yes | Yes | Yes | Yes |
@@ -91,6 +73,7 @@ macSCP is a modern, native macOS application built with SwiftUI that provides se
 
 ### 📁 **Advanced File Management**
 - **Full File Browser**: Navigate remote file systems with an intuitive Finder-like interface
+- **Go to Folder**: Jump to any path with ⇧⌘G or the path-bar icon — supports relative paths, `..`, and `~`
 - **File Operations**:
   - Create, delete, rename files and folders
   - Copy, cut, and paste operations with clipboard support
@@ -160,11 +143,29 @@ macSCP is a modern, native macOS application built with SwiftUI that provides se
 
 ## Installation
 
-### Download
-1. Download the latest release from the [Releases](https://github.com/macnev2013/macSCP/releases) page
+### Homebrew (recommended)
+
+```bash
+brew tap onlymykazari/tap
+brew install --cask macscp-revived
+```
+
+### Manual Download
+1. Download the latest release from the [Releases](https://github.com/onlymykazari/macSCP-Revived/releases) page
 2. Open the `.dmg` file
-3. Drag macSCP to your Applications folder
-4. Launch macSCP from Applications
+3. Drag macSCP-Revived to your Applications folder
+4. Launch macSCP-Revived from Applications
+
+### ⚠️ Note on first launch (unsigned builds)
+
+Releases are currently **ad-hoc signed** (no Apple Developer ID), so Gatekeeper will block the first launch. To open the app:
+
+- **Easiest**: right-click (or Control-click) the app → **Open** → **Open** in the dialog, or
+- Remove the quarantine attribute manually:
+  ```bash
+  xattr -dr com.apple.quarantine /Applications/macSCP-Revived.app
+  ```
+- If you installed via Homebrew, `brew` strips the quarantine attribute automatically in most cases.
 
 ### Requirements
 - macOS 15.0 (Sequoia) or later
@@ -181,7 +182,7 @@ macSCP is a modern, native macOS application built with SwiftUI that provides se
 
 ### Dependencies
 
-macSCP uses Swift Package Manager for dependency management. Required packages:
+macSCP-Revived uses Swift Package Manager for dependency management. Required packages:
 - [Citadel](https://github.com/Orlandos-nl/Citadel) - SSH/SFTP implementation
 - [Soto](https://github.com/soto-project/soto) - AWS SDK for Swift (S3 support)
 - [SwiftNIO](https://github.com/apple/swift-nio) - High-performance networking
@@ -191,8 +192,8 @@ macSCP uses Swift Package Manager for dependency management. Required packages:
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/macnev2013/macSCP.git
-   cd macSCP
+   git clone https://github.com/onlymykazari/macSCP-Revived.git
+   cd macSCP-Revived
    ```
 
 2. Open the project in Xcode:
@@ -202,12 +203,7 @@ macSCP uses Swift Package Manager for dependency management. Required packages:
 
 3. Wait for Swift Package Manager to resolve dependencies
 
-4. Select your development team in the project settings:
-   - Select the project in the navigator
-   - Go to "Signing & Capabilities"
-   - Select your Team
-
-5. Build and run:
+4. Build and run — the project is configured for ad-hoc signing, so **no development team is required**:
    - Press `⌘R` or click the Run button
    - Or use the build script: `./create-dmg.sh`
 
@@ -220,13 +216,13 @@ A build script is included to create a distributable DMG:
 ```
 
 This will:
-- Build the app in Release mode
-- Create a DMG installer
-- Sign the application (if configured)
+- Build the app in Release mode (version is derived from the latest `v*` git tag)
+- Create a DMG installer named `macSCP-Revived-<version>.dmg`
+- Print a Sparkle update signature for the appcast (requires `SPARKLE_PRIVATE_KEY` context for CI)
 
 ## Architecture
 
-macSCP is built with modern Swift and SwiftUI patterns:
+macSCP-Revived is built with modern Swift and SwiftUI patterns:
 
 - **SwiftUI**: Entire UI built with declarative SwiftUI
 - **SwiftData**: Model persistence and data management
@@ -274,21 +270,21 @@ Contributions are welcome! Here's how you can help:
 
 ## Security
 
-macSCP takes security seriously:
+macSCP-Revived takes security seriously:
 
 - Passwords and AWS credentials are stored securely in macOS Keychain
 - SSH keys are never copied or stored
 - All SFTP connections use SSH protocol encryption
 - All S3 connections use HTTPS encryption
-- Privacy-focused telemetry via TelemetryDeck (no personal data collected)
+- **No telemetry** — the app is fully offline and collects nothing
 - All code is open source for transparency
-
 
 ## Roadmap
 
 Future features under consideration:
 
 - [x] Terminal emulator integration
+- [x] Go to Folder (⇧⌘G) path navigation
 - [ ] Port forwarding support
 - [ ] File synchronization
 - [ ] Bookmarks and favorites
@@ -320,7 +316,7 @@ Future features under consideration:
 
 ### General
 
-- **App won't launch**: Check macOS version requirements (15.0+)
+- **App won't launch**: Check macOS version requirements (15.0+); see the first-launch note above if Gatekeeper blocks it
 - **Crashes**: Check Console.app for crash logs and report issues
 
 ## License
@@ -329,6 +325,7 @@ This project is licensed under CC0 1.0 Universal - see the [LICENSE](LICENSE) fi
 
 ## Acknowledgments
 
+- Based on [macSCP](https://github.com/macnev2013/macSCP) by macnev2013 (CC0)
 - Built with [Citadel](https://github.com/Orlandos-nl/Citadel) by Joannis Orlandos
 - S3 support powered by [Soto](https://github.com/soto-project/soto)
 - Terminal emulation powered by [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) by Miguel de Icaza
@@ -338,13 +335,13 @@ This project is licensed under CC0 1.0 Universal - see the [LICENSE](LICENSE) fi
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/macnev2013/macSCP/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/macnev2013/macSCP/discussions)
+- **Issues**: [GitHub Issues](https://github.com/onlymykazari/macSCP-Revived/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/onlymykazari/macSCP-Revived/discussions)
 
 ---
 
 <p align="center">
-  If you find macSCP useful, please consider giving it a <a href="https://github.com/macnev2013/macSCP">star on GitHub</a>!
+  If you find macSCP-Revived useful, please consider giving it a <a href="https://github.com/onlymykazari/macSCP-Revived">star on GitHub</a>!
 </p>
 
 <p align="center">

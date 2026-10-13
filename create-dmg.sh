@@ -1,18 +1,23 @@
 #!/bin/bash
 
-# macSCP DMG Creator Script
-# This script creates a distributable DMG installer for macSCP
+# macSCP-Revived DMG Creator Script
+# This script creates a distributable DMG installer for macSCP-Revived
 
 set -e
 
-APP_NAME="macSCP"
-VERSION="0.2.3"
+APP_NAME="macSCP-Revived"
+# Version comes from the latest v* git tag (e.g. v1.0.0 -> 1.0.0)
+VERSION=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null | sed 's/^v//')
+if [ -z "${VERSION}" ]; then
+    echo "❌ No v* git tag found. Create a tag first: git tag v1.0.0"
+    exit 1
+fi
 DMG_NAME="${APP_NAME}-${VERSION}"
 BUILD_DIR="build"
 DMG_DIR="dmg-staging"
 FINAL_DMG="${DMG_NAME}.dmg"
 
-echo "🚀 Building macSCP..."
+echo "🚀 Building ${APP_NAME} ${VERSION}..."
 
 # Archive the app (Release build)
 xcodebuild archive \
