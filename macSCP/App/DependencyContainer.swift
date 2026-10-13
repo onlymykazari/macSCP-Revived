@@ -84,6 +84,17 @@ final class DependencyContainer: ObservableObject {
         )
     }
 
+    func makeBackupViewModel() -> BackupViewModel {
+        BackupViewModel(
+            service: BackupService(
+                connectionRepository: connectionRepository,
+                folderRepository: folderRepository,
+                keychainService: keychainService,
+                settingsStore: AppLockSettingsStore(appLock: appLockManager)
+            )
+        )
+    }
+
     func makeFileBrowserViewModel(
         connection: Connection,
         sftpSession: SFTPSessionProtocol,

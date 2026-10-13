@@ -63,6 +63,7 @@ macSCP-Revived is a modern, native macOS application built with SwiftUI that pro
 - **Keychain Integration**: Securely store passwords in macOS Keychain
 - **SSH Key Support**: Use your existing SSH private keys for authentication
 - **Connection Profiles**: Save and organize multiple server connections with custom icons and descriptions
+- **Encrypted Backup & Restore**: Export everything (connections, folders, saved passwords, app settings) to a single password-protected file (AES-256-GCM), and restore it with merge or replace strategies
 
 ### ☁️ **Amazon S3 Support**
 - **S3 & S3-Compatible Storage**: Connect to Amazon S3, MinIO, DigitalOcean Spaces, and other S3-compatible services
@@ -277,6 +278,7 @@ macSCP-Revived takes security seriously:
 - All SFTP connections use SSH protocol encryption
 - All S3 connections use HTTPS encryption
 - **No telemetry** — the app is fully offline and collects nothing
+- Backups are encrypted with AES-256-GCM and never leave your machine unless you choose to move them
 - All code is open source for transparency
 
 ## Roadmap
@@ -285,12 +287,12 @@ Future features under consideration:
 
 - [x] Terminal emulator integration
 - [x] Go to Folder (⇧⌘G) path navigation
+- [x] Encrypted backup & restore (import/export connections)
 - [ ] Port forwarding support
 - [ ] File synchronization
 - [ ] Bookmarks and favorites
 - [ ] Split-pane view
 - [ ] Theme customization
-- [ ] Import/export connections
 - [ ] Multi-tab support
 - [ ] iCloud sync for connections
 

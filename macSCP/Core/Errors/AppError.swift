@@ -56,6 +56,10 @@ enum AppError: LocalizedError, Sendable {
     case biometricNotAvailable
     case biometricAuthFailed(String)
 
+    // Backup errors
+    case backupInvalidFile
+    case backupWrongPassword
+
     // General errors
     case unknown(String)
     case notConnected
@@ -134,6 +138,11 @@ enum AppError: LocalizedError, Sendable {
         case .biometricAuthFailed(let message):
             return "Authentication failed: \(message)"
 
+        case .backupInvalidFile:
+            return "The file is not a valid macSCP-Revived backup"
+        case .backupWrongPassword:
+            return "Wrong password, or the backup file has been modified"
+
         case .unknown(let message):
             return message
         case .notConnected:
@@ -174,6 +183,12 @@ extension AppError {
     static func from(_ error: Error) -> AppError {
         if let appError = error as? AppError {
             return appError
+        }
+        if let cryptoError = error as? BackupCryptoError {
+            switch cryptoError {
+            case .invalidFormat: return .backupInvalidFile
+            case .invalidPassword: return .backupWrongPassword
+            }
         }
         return .unknown(error.localizedDescription)
     }
