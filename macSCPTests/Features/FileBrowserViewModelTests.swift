@@ -125,6 +125,114 @@ final class FileBrowserViewModelTests: XCTestCase {
         XCTAssertTrue(sut.canGoUp == (sut.currentPath != "/"))
     }
 
+    // MARK: - Go to Folder Tests
+
+    func testNormalizedGoToPath_Absolute() {
+        XCTAssertEqual(
+            FileBrowserViewModel.normalizedGoToPath("/var/www//html/", relativeTo: "/home"),
+            "/var/www/html"
+        )
+        XCTAssertEqual(
+            FileBrowserViewModel.normalizedGoToPath("/", relativeTo: "/home"),
+            "/"
+        )
+    }
+
+    func testNormalizedGoToPath_RelativeResolvedAgainstCurrentPath() {
+        XCTAssertEqual(
+            FileBrowserViewModel.normalizedGoToPath("logs", relativeTo: "/var/www"),
+            "/var/www/logs"
+        )
+        XCTAssertEqual(
+            FileBrowserViewModel.normalizedGoToPath("../etc", relativeTo: "/var/www"),
+            "/var/etc"
+        )
+        XCTAssertEqual(
+            FileBrowserViewModel.normalizedGoToPath("./lib/./x", relativeTo: "/usr"),
+            "/usr/lib/x"
+        )
+    }
+
+    func testNormalizedGoToPath_ParentBeyondRootClampsToRoot() {
+        XCTAssertEqual(
+            FileBrowserViewModel.normalizedGoToPath("../../..", relativeTo: "/var"),
+            "/"
+        )
+    }
+
+    func testNormalizedGoToPath_HomePrefixedPassthrough() {
+        XCTAssertEqual(
+            FileBrowserViewModel.normalizedGoToPath("~", relativeTo: "/var"),
+            "~"
+        )
+        XCTAssertEqual(
+            FileBrowserViewModel.normalizedGoToPath("~/documents", relativeTo: "/var"),
+            "~/documents"
+        )
+    }
+
+    func testNormalizedGoToPath_EmptyInputReturnsNil() {
+        XCTAssertNil(FileBrowserViewModel.normalizedGoToPath("", relativeTo: "/var"))
+        XCTAssertNil(FileBrowserViewModel.normalizedGoToPath("   \n ", relativeTo: "/var"))
+        XCTAssertEqual(
+            FileBrowserViewModel.normalizedGoToPath("  /tmp\t", relativeTo: "/var"),
+            "/tmp"
+        )
+    }
+
+    func testGoToPath_NavigatesToNormalizedPath() async {
+        // Given (mock session connects into /home/user)
+        mockFileRepository.mockFiles = []
+        await sut.connect()
+        XCTAssertEqual(sut.currentPath, "/home/user")
+
+        // When
+        await sut.goToPath("../../var/log")
+
+        // Then
+        XCTAssertTrue(mockFileRepository.listFilesCalled)
+        XCTAssertEqual(mockFileRepository.lastListPath, "/var/log")
+        XCTAssertFalse(sut.isShowingGoToFolder)
+    }
+
+    func testGoToPath_EmptyInputDismissesWithoutNavigating() async {
+        // Given
+        mockFileRepository.mockFiles = []
+        await sut.connect()
+        mockFileRepository.listFilesCalled = false
+        sut.showGoToFolder()
+        XCTAssertTrue(sut.isShowingGoToFolder)
+
+        // When
+        await sut.goToPath("   ")
+
+        // Then
+        XCTAssertFalse(sut.isShowingGoToFolder)
+        XCTAssertFalse(mockFileRepository.listFilesCalled)
+    }
+
+    func testShowGoToFolder_RequiresConnection() async {
+        // Given
+        XCTAssertFalse(sut.isConnected)
+
+        // When
+        sut.showGoToFolder()
+
+        // Then
+        XCTAssertFalse(sut.isShowingGoToFolder)
+
+        // When connected
+        await sut.connect()
+        sut.showGoToFolder()
+
+        // Then
+        XCTAssertTrue(sut.isShowingGoToFolder)
+
+        // Dismissal
+        sut.dismissGoToFolder()
+        XCTAssertFalse(sut.isShowingGoToFolder)
+    }
+
     // MARK: - File Operations Tests
 
     func testCreateFolder() async {

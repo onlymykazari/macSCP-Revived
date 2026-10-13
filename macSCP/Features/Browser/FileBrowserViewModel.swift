@@ -59,6 +59,7 @@ final class FileBrowserViewModel {
     var isShowingNewFileSheet = false
     var isShowingRenameSheet = false
     var isShowingDeleteConfirmation = false
+    var isShowingGoToFolder = false
 
     // File to operate on
     var fileToRename: RemoteFile?
@@ -300,6 +301,56 @@ final class FileBrowserViewModel {
 
     func goHome() async {
         await navigateTo("~")
+    }
+
+    // MARK: - Go to Folder
+
+    /// Opens the path input bar in the breadcrumb (via ⇧⌘G or its folder icon)
+    func showGoToFolder() {
+        guard isConnected else { return }
+        isShowingGoToFolder = true
+    }
+
+    func dismissGoToFolder() {
+        isShowingGoToFolder = false
+    }
+
+    /// Navigates to a user-entered path after normalization
+    func goToPath(_ input: String) async {
+        isShowingGoToFolder = false
+
+        guard let path = Self.normalizedGoToPath(input, relativeTo: currentPath) else { return }
+
+        await navigateTo(path)
+    }
+
+    /// Normalizes a user-entered path: trims whitespace, collapses duplicate
+    /// separators, resolves "." and ".." segments, and resolves relative input
+    /// against `base`. Returns nil for empty input. "~"-prefixed paths are
+    /// passed through for the remote session to expand.
+    static func normalizedGoToPath(_ input: String, relativeTo base: String) -> String? {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        if trimmed.hasPrefix("~") {
+            return trimmed
+        }
+
+        let combined = trimmed.hasPrefix("/") ? trimmed : base + "/" + trimmed
+        var segments: [String] = []
+        for segment in combined.split(separator: "/") {
+            switch segment {
+            case ".":
+                continue
+            case "..":
+                if !segments.isEmpty {
+                    segments.removeLast()
+                }
+            default:
+                segments.append(String(segment))
+            }
+        }
+        return "/" + segments.joined(separator: "/")
     }
 
     func refresh() async {
