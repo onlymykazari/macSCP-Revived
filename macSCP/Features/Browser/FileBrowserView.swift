@@ -24,6 +24,20 @@ struct FileBrowserView: View {
                     Task {
                         await viewModel.navigateTo(path)
                     }
+                },
+                isEditingPath: viewModel.isShowingGoToFolder,
+                currentPath: viewModel.currentPath,
+                isGoToEnabled: viewModel.isConnected,
+                onGoToPath: { path in
+                    Task {
+                        await viewModel.goToPath(path)
+                    }
+                },
+                onEditPath: {
+                    viewModel.showGoToFolder()
+                },
+                onCancelPathEdit: {
+                    viewModel.dismissGoToFolder()
                 }
             )
 
@@ -38,6 +52,18 @@ struct FileBrowserView: View {
             statusBar
         }
         .frame(minWidth: WindowSize.minFileBrowser.width, minHeight: WindowSize.minFileBrowser.height)
+        .background {
+            // Hidden Go to Folder shortcut (⇧⌘G), Finder-style
+            Button {
+                viewModel.showGoToFolder()
+            } label: {
+                Image(systemName: "folder")
+            }
+            .keyboardShortcut("g", modifiers: [.shift, .command])
+            .frame(width: 0, height: 0)
+            .opacity(0)
+            .accessibilityHidden(true)
+        }
         .navigationTitle(viewModel.currentPath == "/" ? viewModel.connection.name : (viewModel.currentPath as NSString).lastPathComponent)
         .navigationSubtitle(viewModel.isConnected ? viewModel.connection.connectionString : "Disconnected")
         .toolbar(id: "browserToolbar") {
