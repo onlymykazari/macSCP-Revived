@@ -6,12 +6,25 @@
 set -e
 
 APP_NAME="macSCP-Revived"
-# Version comes from the latest v* git tag (e.g. v1.0.0 -> 1.0.0)
-VERSION=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null | sed 's/^v//')
-if [ -z "${VERSION}" ]; then
+# Base version comes from the latest v* git tag (e.g. v1.0.0 -> 1.0.0).
+# Local builds are distinguishable from release builds: when there are
+# commits after the tag or uncommitted changes, the version gets a
+# suffix like 1.0.1-dev.3.g1a2b3c.dirty
+TAG=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null | sed 's/^v//')
+if [ -z "${TAG}" ]; then
     echo "❌ No v* git tag found. Create a tag first: git tag v1.0.0"
     exit 1
 fi
+SINCE_TAG=$(git rev-list --count "v${TAG}..HEAD" 2>/dev/null || echo 0)
+SHORT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+if git diff --quiet >/dev/null 2>&1 && git diff --cached --quiet >/dev/null 2>&1 && [ "${SINCE_TAG}" = "0" ]; then
+    VERSION="${TAG}"
+else
+    # dirty builds also get a build timestamp so every package name is unique
+    VERSION="${TAG}-dev.${SINCE_TAG}.g${SHORT_SHA}$(git status --porcelain 2>/dev/null | grep -q . && echo ".dirty.$(date +%H%M%S)")"
+fi
+BUILD_NUMBER=$(git rev-list --count HEAD 2>/dev/null || echo 0)
+echo "🏷️  Version: ${VERSION} (build ${BUILD_NUMBER})"
 DMG_NAME="${APP_NAME}-${VERSION}"
 BUILD_DIR="build"
 DMG_DIR="dmg-staging"
@@ -19,7 +32,7 @@ FINAL_DMG="${DMG_NAME}.dmg"
 
 echo "🚀 Building ${APP_NAME} ${VERSION}..."
 
-# Archive the app (Release build)
+# Archive the app (Release build); env vars override the Stamp Version phase
 xcodebuild archive \
     -project macSCP.xcodeproj \
     -scheme macSCP \
@@ -28,7 +41,9 @@ xcodebuild archive \
     CODE_SIGN_IDENTITY="-" \
     CODE_SIGN_STYLE=Manual \
     DEVELOPMENT_TEAM="" \
-    | xcpretty || xcodebuild archive \
+    MACSCP_VERSION="${VERSION}" \
+    MACSCP_BUILD_NUMBER="${BUILD_NUMBER}" \
+    | xcpretty || MACSCP_VERSION="${VERSION}" MACSCP_BUILD_NUMBER="${BUILD_NUMBER}" xcodebuild archive \
     -project macSCP.xcodeproj \
     -scheme macSCP \
     -configuration Release \
@@ -45,6 +60,33 @@ xcodebuild -exportArchive \
     -archivePath "${BUILD_DIR}/${APP_NAME}.xcarchive" \
     -exportPath "${BUILD_DIR}" \
     -exportOptionsPlist exportOptions.plist
+
+# Stamp the exported app's version explicitly. The build-phase stamp does not
+# reliably land on the exported copy; touching Info.plist invalidates the
+# signature, so the app is re-signed (ad-hoc) right after.
+#
+# Re-signing MUST carry the entitlements forward: a bare `codesign --force`
+# drops them all (no sandbox, no file access). Xcode also strips the
+# app-scoped-bookmarks entitlement under ad-hoc signing, so it is added back
+# here — it keeps private-key folder grants valid across launches.
+EXPORTED_APP="${BUILD_DIR}/${APP_NAME}.app"
+EXPORTED_PLIST="${EXPORTED_APP}/Contents/Info.plist"
+ENTITLEMENTS_TMP="${BUILD_DIR}/resign-entitlements.plist"
+codesign -d --entitlements - --xml "${EXPORTED_APP}" > "${ENTITLEMENTS_TMP}" 2>/dev/null
+/usr/libexec/PlistBuddy -c "Add :com.apple.security.files.bookmarks.app-scope bool true" "${ENTITLEMENTS_TMP}" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Set :com.apple.security.files.bookmarks.app-scope true" "${ENTITLEMENTS_TMP}"
+
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" "${EXPORTED_PLIST}"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD_NUMBER}" "${EXPORTED_PLIST}"
+codesign --force --sign - --timestamp=none --entitlements "${ENTITLEMENTS_TMP}" "${EXPORTED_APP}"
+echo "🔖 Stamped version ${VERSION} (build ${BUILD_NUMBER})"
+
+# Guard: the re-signed app must still be sandboxed with its entitlements
+if ! codesign -d --entitlements - --xml "${EXPORTED_APP}" 2>/dev/null | grep -q "com.apple.security.app-sandbox"; then
+    echo "❌ Re-signed app lost its entitlements — aborting"
+    exit 1
+fi
+echo "🔐 Entitlements preserved (sandbox + app-scoped bookmarks)"
 
 # Create DMG staging directory
 echo "🎨 Creating DMG staging area..."
