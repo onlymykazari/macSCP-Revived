@@ -82,13 +82,14 @@ jobs:
         run: |
           APP="build/${{ env.APP_NAME }}.app"
           ENT="build/resign-entitlements.plist"
-          codesign -d --entitlements - --xml "$APP" > "$ENT" 2>/dev/null
-          /usr/libexec/PlistBuddy -c "Add :com.apple.security.files.bookmarks.app-scope bool true" "$ENT" 2>/dev/null \
-            || /usr/libexec/PlistBuddy -c "Set :com.apple.security.files.bookmarks.app-scope true" "$ENT"
+          # Entitlements come from the project file; the keychain access group
+          # needs a team identifier, which ad-hoc signing does not have.
+          cp macSCP/macSCP.entitlements "$ENT"
+          /usr/libexec/PlistBuddy -c "Delete :keychain-access-groups" "$ENT" 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${{ steps.version.outputs.version }}" "$APP/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ steps.version.outputs.build_number }}" "$APP/Contents/Info.plist"
           codesign --force --sign - --timestamp=none --entitlements "$ENT" "$APP"
-          codesign -d --entitlements - --xml "$APP" 2>/dev/null | grep -q "com.apple.security.app-sandbox" \
+          codesign -d --entitlements - "$APP" 2>/dev/null | grep -a -q "com.apple.security.app-sandbox" \
             || { echo "ERROR: entitlements lost on re-sign"; exit 1; }
           echo "Stamped $(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist") build $(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$APP/Contents/Info.plist")"
 

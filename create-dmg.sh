@@ -72,9 +72,10 @@ xcodebuild -exportArchive \
 EXPORTED_APP="${BUILD_DIR}/${APP_NAME}.app"
 EXPORTED_PLIST="${EXPORTED_APP}/Contents/Info.plist"
 ENTITLEMENTS_TMP="${BUILD_DIR}/resign-entitlements.plist"
-codesign -d --entitlements - --xml "${EXPORTED_APP}" > "${ENTITLEMENTS_TMP}" 2>/dev/null
-/usr/libexec/PlistBuddy -c "Add :com.apple.security.files.bookmarks.app-scope bool true" "${ENTITLEMENTS_TMP}" 2>/dev/null \
-    || /usr/libexec/PlistBuddy -c "Set :com.apple.security.files.bookmarks.app-scope true" "${ENTITLEMENTS_TMP}"
+# Entitlements come from the project file; the keychain access group needs a
+# team identifier, which ad-hoc signing does not have.
+cp macSCP/macSCP.entitlements "${ENTITLEMENTS_TMP}"
+/usr/libexec/PlistBuddy -c "Delete :keychain-access-groups" "${ENTITLEMENTS_TMP}" 2>/dev/null || true
 
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" "${EXPORTED_PLIST}"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD_NUMBER}" "${EXPORTED_PLIST}"
@@ -82,7 +83,7 @@ codesign --force --sign - --timestamp=none --entitlements "${ENTITLEMENTS_TMP}" 
 echo "🔖 Stamped version ${VERSION} (build ${BUILD_NUMBER})"
 
 # Guard: the re-signed app must still be sandboxed with its entitlements
-if ! codesign -d --entitlements - --xml "${EXPORTED_APP}" 2>/dev/null | grep -q "com.apple.security.app-sandbox"; then
+if ! codesign -d --entitlements - "${EXPORTED_APP}" 2>/dev/null | grep -a -q "com.apple.security.app-sandbox"; then
     echo "❌ Re-signed app lost its entitlements — aborting"
     exit 1
 fi
