@@ -54,6 +54,23 @@ final class Logger {
         for category in [LogCategory.app, .sftp, .s3, .keychain, .database, .ui, .network, .auth] {
             loggers[category] = os.Logger(subsystem: subsystem, category: category.rawValue)
         }
+        writeLaunchMarker()
+    }
+
+    /// Marks a session boundary in the file log with the exact build identity.
+    private func writeLaunchMarker() {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
+        #if DEBUG
+        let configuration = "Debug"
+        #else
+        let configuration = "Release"
+        #endif
+        FileLogStore.shared.write(
+            level: .info,
+            category: .app,
+            message: "=== macSCP-Revived \(version) (build \(build), \(configuration)) launched ==="
+        )
     }
 
     func log(
@@ -69,6 +86,7 @@ final class Logger {
         let logMessage = "\(level.prefix) [\(fileName):\(line)] \(function) - \(message)"
 
         logger.log(level: level.osLogType, "\(logMessage)")
+        FileLogStore.shared.write(level: level, category: category, message: logMessage)
 
         #if DEBUG
         print(logMessage)

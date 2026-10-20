@@ -6,6 +6,7 @@ Pre-1.0.0 history of the original macSCP lives in [release.md](release.md) and t
 ## [Unreleased]
 
 ### Added
+- **Diagnostics pane** (Settings → Diagnostics): shows the exact build identity (version, build number, Debug/Release), a Verbose Logging toggle, and Export Logs… — app logs are now also written to an on-disk file that survives relaunches (info-level always, debug-level when verbose), with a session marker per launch so bug reports carry the full picture.
 - **Quick Look (Space)**: press Space on a selected file to preview it in the system Quick Look panel (text, images, video, audio, PDF). The file is quietly downloaded to a temporary directory first; files over 100 MB are skipped.
 - **Import from ssh config**: create connections from `~/.ssh/config` — pick the file (Finder dialog, which grants sandbox access) or paste its text, review the parsed hosts (name, user@host:port, auth method), and import the selected ones. HostName/User/Port/IdentityFile map onto the connection; wildcard patterns, `Include` and `Proxy*` directives are skipped; duplicates are detected before import; key-based entries import as private-key auth, the rest ask for a password on first connect.
 - **Bookmarks** (toolbar bookmark menu, ⌘D to bookmark the current folder): save frequently used remote paths per connection, jump to them from the toolbar, and rename or remove them from the same menu.

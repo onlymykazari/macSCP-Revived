@@ -10,11 +10,14 @@ import SwiftUI
 struct SettingsView: View {
     @State private var appLockManager = AppLockManager.shared
     @State private var pane: SettingsPane = .security
+    @AppStorage(FileLogStore.verboseLoggingDefaultsKey) private var verboseLoggingEnabled = false
+    @State private var exportError: String?
     private let biometricService: BiometricAuthServiceProtocol = BiometricAuthService.shared
 
     private enum SettingsPane: String, CaseIterable, Identifiable {
         case security
         case backup
+        case diagnostics
 
         var id: String { rawValue }
 
@@ -22,6 +25,7 @@ struct SettingsView: View {
             switch self {
             case .security: return "Security"
             case .backup: return "Backup & Restore"
+            case .diagnostics: return "Diagnostics"
             }
         }
     }
@@ -57,7 +61,23 @@ struct SettingsView: View {
 
             case .backup:
                 BackupView(viewModel: DependencyContainer.shared.makeBackupViewModel())
+
+            case .diagnostics:
+                Form {
+                    diagnosticsSection
+                }
+                .formStyle(.grouped)
+                .frame(width: 470)
+                .fixedSize(horizontal: false, vertical: true)
             }
+        }
+        .alert("Export Failed", isPresented: Binding(
+            get: { exportError != nil },
+            set: { if !$0 { exportError = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(exportError ?? "")
         }
     }
 
@@ -132,6 +152,83 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+
+    // MARK: - Diagnostics Section
+
+    @ViewBuilder
+    private var diagnosticsSection: some View {
+        Section {
+            HStack {
+                Text("Version")
+                Spacer()
+                Text("\(versionString) (build \(buildString))")
+                    .foregroundStyle(.secondary)
+                    .monospaced()
+            }
+
+            HStack {
+                Text("Build")
+                Spacer()
+                Text(buildConfiguration)
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("About")
+        }
+
+        Section {
+            Toggle(isOn: $verboseLoggingEnabled) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Verbose Logging")
+                    Text("Also record debug-level events to the log file. Leave off unless asked for it.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Button {
+                exportLogs()
+            } label: {
+                Label("Export Logs…", systemImage: "square.and.arrow.up")
+            }
+        } header: {
+            Text("Logging")
+        } footer: {
+            Text("Info-level events are always written to an on-disk log that survives relaunches. Export it and attach it to a bug report when something misbehaves.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var versionString: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+    }
+
+    private var buildString: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
+    }
+
+    private var buildConfiguration: String {
+        #if DEBUG
+        return "Debug"
+        #else
+        return "Release"
+        #endif
+    }
+
+    private func exportLogs() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "macscp-log-\(Int(Date().timeIntervalSince1970)).txt"
+        panel.canCreateDirectories = true
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            try FileLogStore.shared.export(to: url)
+        } catch {
+            exportError = error.localizedDescription
         }
     }
 }
