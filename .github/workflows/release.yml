@@ -88,6 +88,13 @@ jobs:
           /usr/libexec/PlistBuddy -c "Delete :keychain-access-groups" "$ENT" 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${{ steps.version.outputs.version }}" "$APP/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ steps.version.outputs.build_number }}" "$APP/Contents/Info.plist"
+          # The export may leave nested frameworks unsigned (archive runs with
+          # signing disabled), which blocks re-signing the app: ad-hoc sign
+          # whatever has no valid signature, leave the rest alone.
+          find "$APP/Contents/Frameworks" -maxdepth 1 \( -name "*.framework" -o -name "*.dylib" \) 2>/dev/null \
+            | while read -r item; do
+                codesign -v "$item" >/dev/null 2>&1 || codesign --force --deep --sign - --timestamp=none "$item"
+              done
           codesign --force --sign - --timestamp=none --entitlements "$ENT" "$APP"
           codesign -d --entitlements - "$APP" 2>/dev/null | grep -a -q "com.apple.security.app-sandbox" \
             || { echo "ERROR: entitlements lost on re-sign"; exit 1; }

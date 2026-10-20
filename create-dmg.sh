@@ -79,6 +79,12 @@ cp macSCP/macSCP.entitlements "${ENTITLEMENTS_TMP}"
 
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" "${EXPORTED_PLIST}"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD_NUMBER}" "${EXPORTED_PLIST}"
+# The export may leave nested frameworks unsigned, which blocks re-signing the
+# app: ad-hoc sign whatever has no valid signature, leave the rest alone.
+find "${EXPORTED_APP}/Contents/Frameworks" -maxdepth 1 \( -name "*.framework" -o -name "*.dylib" \) 2>/dev/null \
+    | while read -r item; do
+        codesign -v "$item" >/dev/null 2>&1 || codesign --force --deep --sign - --timestamp=none "$item"
+      done
 codesign --force --sign - --timestamp=none --entitlements "${ENTITLEMENTS_TMP}" "${EXPORTED_APP}"
 echo "🔖 Stamped version ${VERSION} (build ${BUILD_NUMBER})"
 
