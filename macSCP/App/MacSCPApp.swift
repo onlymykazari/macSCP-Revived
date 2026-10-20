@@ -34,8 +34,7 @@ struct MacSCPApp: App {
     var body: some Scene {
         // Main Window - Connection List
         WindowGroup {
-            ConnectionListView(viewModel: container.makeConnectionListViewModel())
-                .appLockOverlay()
+            ConnectionListWindow()
         }
         .modelContainer(container.modelContainer)
         .defaultSize(WindowSize.main)
@@ -91,6 +90,9 @@ struct MacSCPApp: App {
         }
     }
 
+    @FocusedValue(\.browserViewModel) private var browserVM: FileBrowserViewModel?
+    @FocusedValue(\.connectionListViewModel) private var connectionListVM: ConnectionListViewModel?
+
     // MARK: - Commands
     @CommandsBuilder
     private var appCommands: some Commands {
@@ -99,22 +101,83 @@ struct MacSCPApp: App {
         }
 
         CommandGroup(replacing: .newItem) {
-            Button("New Connection") {
-                // Handled by main window
+            // In the browser window ⌘N creates a remote folder (Finder-style);
+            // in the main window it creates a connection.
+            Button(browserVM != nil ? "New Folder" : "New Connection") {
+                if let browserVM {
+                    browserVM.newFolder()
+                } else {
+                    connectionListVM?.isShowingNewConnectionSheet = true
+                }
             }
             .keyboardShortcut("n", modifiers: .command)
+            .disabled(browserVM == nil && connectionListVM == nil)
 
-            Button("New Folder") {
-                // Handled by main window
+            // Uppercase key equivalent = Shift implied; SwiftUI does not
+            // reliably match a lowercase letter combined with the .shift flag
+            Button("New File") {
+                browserVM?.newFile()
             }
-            .keyboardShortcut("n", modifiers: [.command, .shift])
+            .keyboardShortcut("N", modifiers: .command)
+            .disabled(browserVM == nil)
         }
 
         CommandGroup(after: .toolbar) {
             Button("Refresh") {
-                // Handled by active window
+                Task { await browserVM?.refresh() }
             }
             .keyboardShortcut("r", modifiers: .command)
+            .disabled(browserVM == nil)
+
+            Button("Get Info") {
+                browserVM?.getInfoForSelectedFiles()
+            }
+            .keyboardShortcut("i", modifiers: .command)
+            .disabled(browserVM == nil)
+
+            // ⌘D (Safari-style); ⌘B is taken by the default Format ▸ Bold item
+            Button("Add Bookmark") {
+                Task { await browserVM?.addCurrentFolderToBookmarks() }
+            }
+            .keyboardShortcut("d", modifiers: .command)
+            .disabled(browserVM == nil)
+        }
+
+        // Finder-style Go menu for the file browser
+        CommandMenu("Go") {
+            Button("Back") {
+                Task { await browserVM?.goBack() }
+            }
+            .keyboardShortcut("[", modifiers: .command)
+            .disabled(browserVM == nil)
+
+            Button("Forward") {
+                Task { await browserVM?.goForward() }
+            }
+            .keyboardShortcut("]", modifiers: .command)
+            .disabled(browserVM == nil)
+
+            Divider()
+
+            Button("Enclosing Folder") {
+                Task { await browserVM?.goUp() }
+            }
+            .keyboardShortcut(.upArrow, modifiers: .command)
+            .disabled(browserVM == nil)
+
+            Button("Open Selection") {
+                browserVM?.openSelectedFiles()
+            }
+            .keyboardShortcut(.downArrow, modifiers: .command)
+            .disabled(browserVM == nil)
+
+            Divider()
+
+            Button("Go to Folder…") {
+                browserVM?.showGoToFolder()
+            }
+            .keyboardShortcut("g", modifiers: [.shift, .command])
+            .disabled(browserVM == nil)
         }
 
         CommandGroup(replacing: .help) {
