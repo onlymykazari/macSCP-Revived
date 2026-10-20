@@ -7,6 +7,7 @@
 
 import Foundation
 import Citadel
+import NIOSSH
 import NIO
 import NIOCore
 import NIOFoundationCompat
@@ -41,19 +42,28 @@ actor SFTPSession: SFTPSessionProtocol {
                 password: password
             )
 
-            client = try await SSHClient.connect(
+            client = try await SSHConnectionFactory.connect(
                 host: normalizedHost,
                 port: port,
                 authenticationMethod: authMethod,
-                hostKeyValidator: .acceptAnything(),
-                reconnect: .never,
-                group: group
+                group: group,
+                logCategory: .sftp
             )
 
             isConnected = true
 
             // Get home directory as initial path
-            currentPath = try await getRealPath(at: ".")
+            do {
+                currentPath = try await getRealPath(at: ".")
+            } catch {
+                // Authenticated, but the SFTP subsystem failed: typical for
+                // git-only SSH servers (Gitea, GitHub, …)
+                throw AppError.connectionFailed(
+                    "Authenticated, but the server did not provide a usable SFTP service — "
+                        + "git-only SSH servers such as Gitea or GitHub do not support file browsing. "
+                        + "(\(error.localizedDescription))"
+                )
+            }
 
             logInfo("Connected successfully to \(host)", category: .sftp)
         } catch {
@@ -78,32 +88,50 @@ actor SFTPSession: SFTPSessionProtocol {
         do {
             let normalizedHost = (host.lowercased() == "localhost") ? "127.0.0.1" : host
 
-            // Read the private key file
-            let privateKeyURL = URL(fileURLWithPath: privateKeyPath)
-            let privateKeyData = try Data(contentsOf: privateKeyURL)
+            // Read the private key file (through a security-scoped bookmark
+            // when the key lives outside the sandbox, e.g. ~/.ssh)
+            let resolvedKeyPath = FileManager.mappingContainerHomeToReal(privateKeyPath)
+            let privateKeyURL = URL(fileURLWithPath: resolvedKeyPath)
+            let privateKeyData = try SecurityScopedAccess.shared.withAccess(to: resolvedKeyPath) {
+                try Data(contentsOf: privateKeyURL)
+            }
             guard let privateKeyString = String(data: privateKeyData, encoding: .utf8) else {
                 throw AppError.authenticationFailed
             }
 
-            // Note: Citadel's RSA private key init doesn't support passphrase directly
-            // For passphrase-protected keys, they need to be decrypted first or use OpenSSH format
-            // The library expects unencrypted PEM or OpenSSH format keys
-            let authMethod: SSHAuthenticationMethod = try .rsa(
+            let loadedKey = try SSHPrivateKey.load(
                 username: username,
-                privateKey: .init(sshRsa: privateKeyString)
+                keyText: privateKeyString,
+                passphrase: passphrase
             )
+            logInfo("Private key type: \(loadedKey.type.rawValue)", category: .sftp)
 
-            client = try await SSHClient.connect(
-                host: normalizedHost,
-                port: port,
-                authenticationMethod: authMethod,
-                hostKeyValidator: .acceptAnything(),
-                reconnect: .never,
-                group: group
-            )
+            do {
+                client = try await SSHConnectionFactory.connect(
+                    host: normalizedHost,
+                    port: port,
+                    authenticationMethod: loadedKey.authenticationMethod,
+                    group: group,
+                    logCategory: .sftp
+                )
+            } catch SSHClientError.allAuthenticationOptionsFailed {
+                throw AppError.connectionFailed(
+                    SSHPrivateKey.rejectionMessage(for: loadedKey.type, username: username, host: host)
+                )
+            }
 
             isConnected = true
-            currentPath = try await getRealPath(at: ".")
+            do {
+                currentPath = try await getRealPath(at: ".")
+            } catch {
+                // Authenticated, but the SFTP subsystem failed: typical for
+                // git-only SSH servers (Gitea, GitHub, …)
+                throw AppError.connectionFailed(
+                    "Authenticated, but the server did not provide a usable SFTP service — "
+                        + "git-only SSH servers such as Gitea or GitHub do not support file browsing. "
+                        + "(\(error.localizedDescription))"
+                )
+            }
 
             logInfo("Connected successfully to \(host)", category: .sftp)
         } catch {
@@ -278,40 +306,49 @@ actor SFTPSession: SFTPSessionProtocol {
         }
     }
 
+    /// Copies a file server-side over the SFTP protocol (stream read → write
+    /// through this client). Deliberately avoids a remote shell `cp`: the
+    /// shell's view of paths can differ from SFTP's (encoding, chroot), which
+    /// surfaced as "cannot stat" on non-ASCII paths.
     func copyFile(from sourcePath: String, to destinationPath: String) async throws {
         guard let client = client else {
             throw AppError.notConnected
         }
 
         do {
-            let result = try await client.executeCommand("cp '\(sourcePath)' '\(destinationPath)'")
-            let output = String(buffer: result).trimmingCharacters(in: .whitespacesAndNewlines)
+            let chunkSize = UInt64(FileOperationConstants.chunkSize)
+            try await client.withSFTP { sftp in
+                let attributes = try await sftp.getAttributes(at: sourcePath)
+                let total = UInt64(attributes.size ?? 0)
 
-            if !output.isEmpty && output.lowercased().contains("permission denied") {
-                throw AppError.permissionDenied
+                try await sftp.withFile(filePath: sourcePath, flags: .read) { source in
+                    try await sftp.withFile(filePath: destinationPath, flags: [.write, .create, .truncate]) { destination in
+                        var offset: UInt64 = 0
+                        while offset < total {
+                            try Task.checkCancellation()
+                            let length = min(chunkSize, total - offset)
+                            let buffer = try await source.read(from: offset, length: UInt32(length))
+                            guard buffer.readableBytes > 0 else { break }
+                            try await destination.write(buffer, at: offset)
+                            offset += UInt64(buffer.readableBytes)
+                        }
+                    }
+                }
             }
-
             logInfo("Copied file: \(sourcePath) to \(destinationPath)", category: .sftp)
-        } catch let error as AppError {
-            throw error
         } catch {
             throw parseSFTPError(error, operation: "copy file")
         }
     }
 
+    /// Recursively copies a directory over SFTP (see `copyFile`).
     func copyDirectory(from sourcePath: String, to destinationPath: String) async throws {
-        guard let client = client else {
+        guard client != nil else {
             throw AppError.notConnected
         }
 
         do {
-            let result = try await client.executeCommand("cp -r '\(sourcePath)' '\(destinationPath)'")
-            let output = String(buffer: result).trimmingCharacters(in: .whitespacesAndNewlines)
-
-            if !output.isEmpty && output.lowercased().contains("permission denied") {
-                throw AppError.permissionDenied
-            }
-
+            try await copyDirectoryRecursively(from: sourcePath, to: destinationPath)
             logInfo("Copied directory: \(sourcePath) to \(destinationPath)", category: .sftp)
         } catch let error as AppError {
             throw error
@@ -320,22 +357,48 @@ actor SFTPSession: SFTPSessionProtocol {
         }
     }
 
+    private func copyDirectoryRecursively(from sourcePath: String, to destinationPath: String) async throws {
+        guard let client = client else {
+            throw AppError.notConnected
+        }
+
+        let entries: [(name: String, isDirectory: Bool)] = try await client.withSFTP { sftp in
+            try await sftp.createDirectory(atPath: destinationPath)
+            var result: [(name: String, isDirectory: Bool)] = []
+            for response in try await sftp.listDirectory(atPath: sourcePath) {
+                for component in response.components
+                where component.filename != "." && component.filename != ".." {
+                    result.append((
+                        name: component.filename,
+                        isDirectory: Self.isDirectoryFromPermissions(component.attributes.permissions)
+                    ))
+                }
+            }
+            return result
+        }
+
+        for entry in entries {
+            let childSource = sourcePath.appendingPathComponent(entry.name)
+            let childDestination = destinationPath.appendingPathComponent(entry.name)
+            if entry.isDirectory {
+                try await copyDirectoryRecursively(from: childSource, to: childDestination)
+            } else {
+                try await copyFile(from: childSource, to: childDestination)
+            }
+        }
+    }
+
+    /// Moves/renames over SFTP (same reasoning as `copyFile`).
     func move(from sourcePath: String, to destinationPath: String) async throws {
         guard let client = client else {
             throw AppError.notConnected
         }
 
         do {
-            let result = try await client.executeCommand("mv '\(sourcePath)' '\(destinationPath)'")
-            let output = String(buffer: result).trimmingCharacters(in: .whitespacesAndNewlines)
-
-            if !output.isEmpty && output.lowercased().contains("permission denied") {
-                throw AppError.permissionDenied
+            try await client.withSFTP { sftp in
+                try await sftp.rename(at: sourcePath, to: destinationPath)
             }
-
             logInfo("Moved: \(sourcePath) to \(destinationPath)", category: .sftp)
-        } catch let error as AppError {
-            throw error
         } catch {
             throw parseSFTPError(error, operation: "move")
         }
@@ -550,6 +613,28 @@ actor SFTPSession: SFTPSessionProtocol {
     }
 
     private func parseConnectionError(_ error: Error) -> AppError {
+        if let appError = error as? AppError {
+            return appError
+        }
+        if let nioError = error as? NIOSSHError {
+            return .connectionFailed(
+                "SSH handshake failed (\(nioError.type)). The server's SSH implementation may be "
+                    + "incompatible with this app's SSH library — try updating the server's SSH software."
+            )
+        }
+        if let sshError = error as? SSHClientError {
+            switch sshError {
+            case .allAuthenticationOptionsFailed:
+                return .authenticationFailed
+            case .unsupportedPasswordAuthentication:
+                return .connectionFailed("The server does not accept password authentication — use a private key.")
+            case .unsupportedPrivateKeyAuthentication:
+                return .connectionFailed("The server does not accept public-key authentication for this user.")
+            default:
+                break
+            }
+        }
+
         let description = error.localizedDescription.lowercased()
 
         if description.contains("connection refused") {

@@ -64,13 +64,12 @@ actor TerminalSession: TerminalSessionProtocol {
                 password: password
             )
 
-            client = try await SSHClient.connect(
+            client = try await SSHConnectionFactory.connect(
                 host: normalizedHost,
                 port: port,
                 authenticationMethod: authMethod,
-                hostKeyValidator: .acceptAnything(),
-                reconnect: .never,
-                group: group
+                group: group,
+                logCategory: .network
             )
 
             isConnected = true
@@ -109,25 +108,34 @@ actor TerminalSession: TerminalSessionProtocol {
         do {
             let normalizedHost = (host.lowercased() == "localhost") ? "127.0.0.1" : host
 
-            let privateKeyURL = URL(fileURLWithPath: privateKeyPath)
-            let privateKeyData = try Data(contentsOf: privateKeyURL)
+            let resolvedKeyPath = FileManager.mappingContainerHomeToReal(privateKeyPath)
+            let privateKeyURL = URL(fileURLWithPath: resolvedKeyPath)
+            let privateKeyData = try SecurityScopedAccess.shared.withAccess(to: resolvedKeyPath) {
+                try Data(contentsOf: privateKeyURL)
+            }
             guard let privateKeyString = String(data: privateKeyData, encoding: .utf8) else {
                 throw AppError.authenticationFailed
             }
 
-            let authMethod: SSHAuthenticationMethod = try .rsa(
+            let loadedKey = try SSHPrivateKey.load(
                 username: username,
-                privateKey: .init(sshRsa: privateKeyString)
+                keyText: privateKeyString,
+                passphrase: passphrase
             )
 
-            client = try await SSHClient.connect(
-                host: normalizedHost,
-                port: port,
-                authenticationMethod: authMethod,
-                hostKeyValidator: .acceptAnything(),
-                reconnect: .never,
-                group: group
-            )
+            do {
+                client = try await SSHConnectionFactory.connect(
+                    host: normalizedHost,
+                    port: port,
+                    authenticationMethod: loadedKey.authenticationMethod,
+                    group: group,
+                    logCategory: .network
+                )
+            } catch SSHClientError.allAuthenticationOptionsFailed {
+                throw AppError.connectionFailed(
+                    SSHPrivateKey.rejectionMessage(for: loadedKey.type, username: username, host: host)
+                )
+            }
 
             isConnected = true
 
