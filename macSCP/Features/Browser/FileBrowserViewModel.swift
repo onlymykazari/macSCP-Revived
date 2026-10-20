@@ -54,6 +54,11 @@ final class FileBrowserViewModel {
     var sortAscending: Bool = true
     var showHiddenFiles: Bool = false
 
+    // Bookmarks
+    private(set) var bookmarks: [Bookmark] = []
+    var isShowingRenameBookmarkSheet = false
+    var bookmarkToRename: Bookmark?
+
     // Sheet states
     var isShowingNewFolderSheet = false
     var isShowingNewFileSheet = false
@@ -79,6 +84,7 @@ final class FileBrowserViewModel {
     private let s3Session: S3SessionProtocol?
     private let fileRepository: FileRepositoryProtocol
     private let clipboardService: ClipboardService
+    private let bookmarkRepository: BookmarkRepositoryProtocol?
     private let navigationService = NavigationService()
 
     // MARK: - Initialization (SFTP)
@@ -87,13 +93,15 @@ final class FileBrowserViewModel {
         sftpSession: SFTPSessionProtocol,
         fileRepository: FileRepositoryProtocol,
         clipboardService: ClipboardService,
-        password: String
+        password: String,
+        bookmarkRepository: BookmarkRepositoryProtocol? = nil
     ) {
         self.connection = connection
         self.sftpSession = sftpSession
         self.s3Session = nil
         self.fileRepository = fileRepository
         self.clipboardService = clipboardService
+        self.bookmarkRepository = bookmarkRepository
         self.password = password
     }
 
@@ -103,13 +111,15 @@ final class FileBrowserViewModel {
         s3Session: S3SessionProtocol,
         fileRepository: FileRepositoryProtocol,
         clipboardService: ClipboardService,
-        secretAccessKey: String
+        secretAccessKey: String,
+        bookmarkRepository: BookmarkRepositoryProtocol? = nil
     ) {
         self.connection = connection
         self.sftpSession = nil
         self.s3Session = s3Session
         self.fileRepository = fileRepository
         self.clipboardService = clipboardService
+        self.bookmarkRepository = bookmarkRepository
         self.password = secretAccessKey
     }
 
@@ -162,7 +172,7 @@ final class FileBrowserViewModel {
     }
 
     var hasClipboardItems: Bool {
-        !clipboardService.isEmpty
+        !clipboardService.isEmpty && !clipboardService.isSuperseded
     }
 
     var canPaste: Bool {
@@ -191,7 +201,7 @@ final class FileBrowserViewModel {
                 currentPath = await s3Session.currentPath
                 navigationService.reset(to: currentPath)
                 AnalyticsService.trackFileBrowserOpened(protocol: .init(from: connection.connectionType))
-                await loadFiles()
+                await finishConnectionSetup()
             } else {
                 // SFTP connection
                 guard let sftpSession = sftpSession else {
@@ -205,6 +215,7 @@ final class FileBrowserViewModel {
                         password: password
                     )
                 } else if let keyPath = connection.privateKeyPath {
+                    try ensurePrivateKeyAccess(keyPath)
                     try await sftpSession.connect(
                         host: connection.host,
                         port: connection.port,
@@ -217,11 +228,54 @@ final class FileBrowserViewModel {
                 currentPath = await sftpSession.currentPath
                 navigationService.reset(to: currentPath)
                 AnalyticsService.trackFileBrowserOpened(protocol: .init(from: connection.connectionType))
-                await loadFiles()
+                await finishConnectionSetup()
             }
         } catch {
             logError("Connection failed: \(error)", category: connection.connectionType == .s3 ? .s3 : .sftp)
             state = .error(AppError.from(error))
+        }
+    }
+
+    /// The sandbox can't read keys in ~/.ssh unless the user granted access.
+    /// When the key isn't readable, asks once for the key's folder (covers
+    /// every key in it) and remembers the grant for future launches.
+    private func ensurePrivateKeyAccess(_ rawKeyPath: String) throws {
+        let keyPath = FileManager.mappingContainerHomeToReal(rawKeyPath)
+        if keyPath != rawKeyPath {
+            logInfo("Private key path remapped from sandbox container to real home: \(keyPath)", category: .app)
+        }
+        guard !SecurityScopedAccess.shared.canRead(keyPath) else { return }
+
+        let keyFolder = URL(fileURLWithPath: keyPath).deletingLastPathComponent()
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = keyFolder
+        panel.prompt = "Grant Access"
+        panel.message = "Allow macSCP to read the folder containing this connection's private key (\(keyFolder.path))."
+
+        guard panel.runModal() == .OK, let url = panel.url else {
+            throw AppError.connectionFailed("Access to the private key folder was not granted.")
+        }
+        SecurityScopedAccess.shared.remember(url)
+
+        guard SecurityScopedAccess.shared.canRead(keyPath) else {
+            throw AppError.connectionFailed("Private key \(keyPath) is still not readable — pick the folder that actually contains it.")
+        }
+    }
+
+    /// Shared post-connect work: loads bookmarks and jumps to the
+    /// connection's default remote path when one is configured.
+    private func finishConnectionSetup() async {
+        await loadBookmarks()
+
+        if let target = connection.defaultRemotePath?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !target.isEmpty {
+            let normalized = Self.normalizedGoToPath(target, relativeTo: "/") ?? target
+            await navigateTo(normalized)
+        } else {
+            await loadFiles()
         }
     }
 
@@ -353,7 +407,13 @@ final class FileBrowserViewModel {
         return "/" + segments.joined(separator: "/")
     }
 
+    /// Reloads the current directory. When the session was lost, reconnects
+    /// instead — ⌘R recovers an errored/disconnected browser window.
     func refresh() async {
+        guard isConnected else {
+            await connect()
+            return
+        }
         await loadFiles()
     }
 
@@ -443,6 +503,9 @@ final class FileBrowserViewModel {
 
     // MARK: - Clipboard Operations
 
+    /// Copies to the in-app clipboard (works within this connection) and, for
+    /// files, the Coordinator additionally writes file promises to the system
+    /// pasteboard so Finder can paste them as downloads.
     func copySelectedFiles() {
         clipboardService.copy(files: selectedFilesList, from: currentPath, connectionId: connection.id)
     }
@@ -451,14 +514,58 @@ final class FileBrowserViewModel {
         clipboardService.cut(files: selectedFilesList, from: currentPath, connectionId: connection.id)
     }
 
-    func paste() async {
-        guard canPaste else { return }
+    /// Records that the Coordinator also wrote the selection to the system
+    /// pasteboard (drives the status bar hint).
+    func noteSystemPasteboardCopy(count: Int) {
+        clipboardService.noteSystemCopy(count: count)
+    }
 
+    /// Copies the remote paths of the given files to the system pasteboard
+    /// (Finder-style ⌥⌘C "Copy as Pathname").
+    func copyPathsToPasteboard(_ files: [RemoteFile]) {
+        guard !files.isEmpty else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(files.map(\.path).joined(separator: "\n"), forType: .string)
+    }
+
+    /// True when the system pasteboard holds local file URLs that could be
+    /// pasted (uploaded) into the current remote directory.
+    var canPasteFromSystemPasteboard: Bool {
+        NSPasteboard.general.canReadObject(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        )
+    }
+
+    func paste() async {
+        if canPaste {
+            await pasteFromInternalClipboard()
+        } else if canPasteFromSystemPasteboard {
+            await pasteFromSystemPasteboard()
+        }
+    }
+
+    /// Pastes files previously copied/cut within this connection. Pasting a
+    /// copy into its own folder (or over an existing name) gets a Finder-style
+    /// "name copy" suffix; cutting onto itself is a no-op.
+    private func pasteFromInternalClipboard() async {
         let items = clipboardService.items
         let isCut = clipboardService.isCut
+        var existingNames = Set(files.map(\.name))
 
         for item in items {
-            let destinationPath = currentPath.appendingPathComponent(item.fileName)
+            let sameFolder = item.fullSourcePath.directoryPath == currentPath
+            if isCut && sameFolder {
+                continue
+            }
+
+            var destinationName = item.fileName
+            if sameFolder || existingNames.contains(destinationName) {
+                destinationName = Self.uniqueCopyName(for: destinationName, existing: existingNames)
+            }
+            existingNames.insert(destinationName)
+            let destinationPath = currentPath.appendingPathComponent(destinationName)
 
             do {
                 if isCut {
@@ -482,6 +589,40 @@ final class FileBrowserViewModel {
         }
 
         await loadFiles()
+    }
+
+    /// Finder-style duplicate naming: "report.pdf" → "report copy.pdf",
+    /// then "report copy 2.pdf", … until the name is free.
+    static func uniqueCopyName(for name: String, existing: Set<String>) -> String {
+        let ext = (name as NSString).pathExtension
+        let base = (name as NSString).deletingPathExtension
+        func candidate(_ suffix: String) -> String {
+            ext.isEmpty ? "\(base) \(suffix)" : "\(base) \(suffix).\(ext)"
+        }
+
+        var result = candidate("copy")
+        var counter = 2
+        while existing.contains(result) {
+            result = candidate("copy \(counter)")
+            counter += 1
+        }
+        return result
+    }
+
+    /// Uploads local files copied in Finder (or other apps) into the current
+    /// remote directory.
+    private func pasteFromSystemPasteboard() async {
+        guard let urls = NSPasteboard.general.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL] else { return }
+
+        let existingURLs = urls.filter { url in
+            FileManager.default.fileExists(atPath: url.path)
+        }
+        guard !existingURLs.isEmpty else { return }
+
+        await uploadDroppedFiles(existingURLs)
     }
 
     // MARK: - Download/Upload
@@ -774,6 +915,12 @@ final class FileBrowserViewModel {
         await uploadURLs(urls)
     }
 
+    /// Quietly downloads a file to a local URL without transfer tracking
+    /// (used for Quick Look staging and Finder copy-out).
+    func downloadFileQuietly(_ file: RemoteFile, destinationURL: URL) async throws {
+        try await fileRepository.download(remotePath: file.path, to: destinationURL)
+    }
+
     /// Clears completed/failed transfers from the list
     func clearCompletedTransfers() {
         recentTransfers.removeAll()
@@ -838,6 +985,52 @@ final class FileBrowserViewModel {
         AnalyticsService.track(.fileInfoOpened)
     }
 
+    // MARK: - Menu Actions (Finder-style shortcuts)
+
+    func newFolder() {
+        guard isConnected else { return }
+        isShowingNewFolderSheet = true
+    }
+
+    func newFile() {
+        logInfo("New File requested (connected: \(isConnected))", category: .ui)
+        guard isConnected else { return }
+        isShowingNewFileSheet = true
+    }
+
+    /// ⌘↓ / ⌘O — opens the selection: directories are entered, previewable
+    /// files are downloaded and shown in the editor.
+    func openSelectedFiles() {
+        let targets = selectedFilesList
+        guard !targets.isEmpty else { return }
+        for file in targets {
+            if file.isDirectory {
+                Task { await navigateTo(file.path) }
+            } else {
+                openFileInEditor(file)
+            }
+        }
+    }
+
+    /// Fetches a file's content and opens it in an editor window.
+    func openFileInEditor(_ file: RemoteFile) {
+        Task {
+            do {
+                let content = try await getFileContent(file)
+                openEditor(for: file, content: content)
+            } catch {
+                self.error = AppError.from(error)
+            }
+        }
+    }
+
+    /// ⌘I — opens a Get Info window for each selected file.
+    func getInfoForSelectedFiles() {
+        for file in selectedFilesList {
+            showFileInfo(file)
+        }
+    }
+
     func clearPendingFileInfoWindow() {
         pendingFileInfoWindowId = nil
     }
@@ -870,6 +1063,68 @@ final class FileBrowserViewModel {
 
     func clearPendingTerminalWindow() {
         pendingTerminalWindowId = nil
+    }
+
+    // MARK: - Bookmarks
+
+    func loadBookmarks() async {
+        guard let bookmarkRepository else { return }
+        bookmarks = (try? await bookmarkRepository.fetchAll(connectionId: connection.id)) ?? []
+    }
+
+    /// Bookmarks the current remote folder.
+    func addCurrentFolderToBookmarks() async {
+        guard isConnected, let bookmarkRepository else { return }
+
+        let name = currentPath == "/" ? "/" : (currentPath as NSString).lastPathComponent
+        let order = (bookmarks.map(\.displayOrder).max() ?? -1) + 1
+        let bookmark = Bookmark(
+            connectionId: connection.id,
+            name: name,
+            remotePath: currentPath,
+            displayOrder: order
+        )
+
+        do {
+            try await bookmarkRepository.save(bookmark)
+            await loadBookmarks()
+        } catch {
+            logError("Failed to add bookmark: \(error)", category: .database)
+            self.error = AppError.from(error)
+        }
+    }
+
+    func renameBookmark(_ bookmark: Bookmark, to newName: String) async {
+        guard let bookmarkRepository else { return }
+
+        var updated = bookmark.withUpdatedTimestamp()
+        updated.name = newName
+
+        do {
+            try await bookmarkRepository.update(updated)
+            await loadBookmarks()
+        } catch {
+            logError("Failed to rename bookmark: \(error)", category: .database)
+            self.error = AppError.from(error)
+        }
+    }
+
+    func deleteBookmark(_ bookmark: Bookmark) async {
+        guard let bookmarkRepository else { return }
+
+        do {
+            try await bookmarkRepository.delete(id: bookmark.id)
+            await loadBookmarks()
+        } catch {
+            logError("Failed to delete bookmark: \(error)", category: .database)
+            self.error = AppError.from(error)
+        }
+    }
+
+    /// Dismisses the bookmark-rename sheet.
+    func dismissBookmarkRename() {
+        isShowingRenameBookmarkSheet = false
+        bookmarkToRename = nil
     }
 
     // MARK: - Terminal

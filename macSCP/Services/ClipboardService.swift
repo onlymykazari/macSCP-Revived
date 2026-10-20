@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import AppKit
 
 @MainActor
 @Observable
@@ -13,6 +14,16 @@ final class ClipboardService {
     static let shared = ClipboardService()
 
     private(set) var state = ClipboardState()
+
+    /// Number of files also written to the system pasteboard by the last
+    /// Copy (0 = in-app only, e.g. after Cut or when copying directories)
+    private(set) var systemPasteboardCount = 0
+
+    /// System pasteboard change count observed when the in-app clipboard was
+    /// last set. If the pasteboard changes afterwards (the user copied
+    /// something in Finder), the in-app clipboard is superseded and Paste
+    /// should use the system pasteboard instead — "last copy wins".
+    private(set) var pasteboardChangeCount = 0
 
     private init() {}
 
@@ -30,7 +41,17 @@ final class ClipboardService {
         }
 
         state = ClipboardState(items: items, operation: .copy)
+        systemPasteboardCount = 0
+        pasteboardChangeCount = NSPasteboard.general.changeCount
         logDebug("Copied \(files.count) items to clipboard", category: .app)
+    }
+
+    /// Records that the last Copy also wrote to the system pasteboard (shown
+    /// in the status bar so the dual write is visible). Re-syncs the change
+    /// count so our own write doesn't count as a foreign change.
+    func noteSystemCopy(count: Int) {
+        systemPasteboardCount = count
+        pasteboardChangeCount = NSPasteboard.general.changeCount
     }
 
     /// Cuts files to the clipboard
@@ -45,12 +66,15 @@ final class ClipboardService {
         }
 
         state = ClipboardState(items: items, operation: .cut)
+        systemPasteboardCount = 0
+        pasteboardChangeCount = NSPasteboard.general.changeCount
         logDebug("Cut \(files.count) items to clipboard", category: .app)
     }
 
     /// Clears the clipboard
     func clear() {
         state.clear()
+        systemPasteboardCount = 0
         logDebug("Clipboard cleared", category: .app)
     }
 
@@ -58,6 +82,12 @@ final class ClipboardService {
 
     var isEmpty: Bool {
         state.isEmpty
+    }
+
+    /// True when something was copied elsewhere (e.g. Finder) after the
+    /// in-app copy, making the in-app clipboard stale.
+    var isSuperseded: Bool {
+        !state.isEmpty && NSPasteboard.general.changeCount != pasteboardChangeCount
     }
 
     var isCopy: Bool {
@@ -77,7 +107,11 @@ final class ClipboardService {
     }
 
     var displayText: String {
-        state.displayText
+        let base = state.displayText
+        if systemPasteboardCount > 0 {
+            return base + " — paste in Finder to download"
+        }
+        return base
     }
 
     var connectionId: UUID? {
@@ -85,8 +119,10 @@ final class ClipboardService {
     }
 
     /// Returns true if the clipboard can paste to the given connection
+    /// (non-empty, same connection, and not superseded by a later copy
+    /// outside the app)
     func canPaste(to connectionId: UUID) -> Bool {
-        guard !isEmpty else { return false }
+        guard !isEmpty, !isSuperseded else { return false }
         return state.connectionId == connectionId
     }
 }

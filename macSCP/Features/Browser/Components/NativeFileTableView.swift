@@ -8,6 +8,7 @@
 import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
+import Quartz
 
 struct NativeFileTableView: NSViewRepresentable {
     @Bindable var viewModel: FileBrowserViewModel
@@ -84,6 +85,7 @@ struct NativeFileTableView: NSViewRepresentable {
 
         // Set up context menu
         tableView.contextMenuDelegate = context.coordinator
+        tableView.keyDownDelegate = context.coordinator
 
         // Configure scroll view
         scrollView.documentView = tableView
@@ -101,6 +103,7 @@ struct NativeFileTableView: NSViewRepresentable {
         context.coordinator.viewModel = viewModel
         context.coordinator.onDoubleClick = onDoubleClick
         context.coordinator.onGetInfo = onGetInfo
+        context.coordinator.onOpenEditor = onOpenEditor
 
         // Update selection state
         if let tableView = context.coordinator.tableView {
@@ -129,7 +132,7 @@ struct NativeFileTableView: NSViewRepresentable {
     }
 
     @MainActor
-    class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSFilePromiseProviderDelegate, ContextMenuTableViewDelegate {
+    class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSFilePromiseProviderDelegate, ContextMenuTableViewDelegate, FileTableViewKeyHandling, PreviewPanelControlling {
         var viewModel: FileBrowserViewModel
         var onDoubleClick: (RemoteFile) -> Void
         var onGetInfo: (RemoteFile) -> Void
@@ -140,6 +143,8 @@ struct NativeFileTableView: NSViewRepresentable {
         // Track files being dragged for file promise
         private var draggedFiles: [RemoteFile] = []
         private let filePromiseQueue = OperationQueue()
+        /// Files currently staged for Quick Look preview
+        private var previewItems: [QuickLookPreviewItem] = []
 
         init(
             viewModel: FileBrowserViewModel,
@@ -363,9 +368,19 @@ struct NativeFileTableView: NSViewRepresentable {
 
 // MARK: - Context Menu Support
 extension NativeFileTableView.Coordinator {
+    /// Files a context-menu action should operate on: the whole selection when
+    /// the clicked row is part of it, otherwise just the clicked row.
+    private func targetFiles(for clickedFile: RemoteFile) -> [RemoteFile] {
+        if viewModel.selectedFiles.contains(clickedFile.id), !viewModel.selectedFiles.isEmpty {
+            return viewModel.selectedFilesList
+        }
+        return [clickedFile]
+    }
+
     func contextMenu(for row: Int) -> NSMenu? {
         guard row >= 0 && row < viewModel.sortedFiles.count else { return nil }
         let file = viewModel.sortedFiles[row]
+        let targets = targetFiles(for: file)
 
         let menu = NSMenu()
 
@@ -378,24 +393,39 @@ extension NativeFileTableView.Coordinator {
             menu.addItem(NSMenuItem.separator())
         }
 
-        let copyItem = NSMenuItem(title: "Copy", action: #selector(handleCopy(_:)), keyEquivalent: "")
+        let copyItem = NSMenuItem(title: "Copy", action: #selector(handleCopy(_:)), keyEquivalent: "c")
+        copyItem.keyEquivalentModifierMask = .command
         copyItem.target = self
         copyItem.representedObject = file
         copyItem.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: nil)
+        copyItem.toolTip = "Copy for pasting within this app, or paste into Finder to download"
         menu.addItem(copyItem)
 
-        let cutItem = NSMenuItem(title: "Cut", action: #selector(handleCut(_:)), keyEquivalent: "")
+        let cutItem = NSMenuItem(title: "Cut", action: #selector(handleCut(_:)), keyEquivalent: "x")
+        cutItem.keyEquivalentModifierMask = .command
         cutItem.target = self
         cutItem.representedObject = file
         cutItem.image = NSImage(systemSymbolName: "scissors", accessibilityDescription: nil)
+        cutItem.toolTip = "Cut for moving within this connection (paste to move)"
         menu.addItem(cutItem)
 
-        if viewModel.canPaste {
-            let pasteItem = NSMenuItem(title: "Paste", action: #selector(handlePaste(_:)), keyEquivalent: "")
+        if viewModel.canPaste || viewModel.canPasteFromSystemPasteboard {
+            let pasteItem = NSMenuItem(title: "Paste", action: #selector(handlePaste(_:)), keyEquivalent: "v")
+            pasteItem.keyEquivalentModifierMask = .command
             pasteItem.target = self
             pasteItem.image = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: nil)
+            pasteItem.toolTip = viewModel.canPaste
+                ? "Paste files copied within this connection"
+                : "Upload files copied in Finder"
             menu.addItem(pasteItem)
         }
+
+        let copyPathItem = NSMenuItem(title: "Copy Path", action: #selector(handleCopyPath(_:)), keyEquivalent: "c")
+        copyPathItem.keyEquivalentModifierMask = [.command, .option]
+        copyPathItem.target = self
+        copyPathItem.representedObject = file
+        copyPathItem.image = NSImage(systemSymbolName: "link", accessibilityDescription: nil)
+        menu.addItem(copyPathItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -405,7 +435,8 @@ extension NativeFileTableView.Coordinator {
         renameItem.image = NSImage(systemSymbolName: "pencil", accessibilityDescription: nil)
         menu.addItem(renameItem)
 
-        let infoItem = NSMenuItem(title: "Get Info", action: #selector(handleGetInfo(_:)), keyEquivalent: "")
+        let infoItem = NSMenuItem(title: "Get Info", action: #selector(handleGetInfo(_:)), keyEquivalent: "i")
+        infoItem.keyEquivalentModifierMask = .command
         infoItem.target = self
         infoItem.representedObject = file
         infoItem.image = NSImage(systemSymbolName: "info.circle", accessibilityDescription: nil)
@@ -438,13 +469,16 @@ extension NativeFileTableView.Coordinator {
 
     @objc func handleCopy(_ sender: NSMenuItem) {
         guard let file = sender.representedObject as? RemoteFile else { return }
-        viewModel.selectedFiles = [file.id]
+        let targets = targetFiles(for: file)
+        viewModel.selectedFiles = Set(targets.map(\.id))
         viewModel.copySelectedFiles()
+        copyTargetsToSystemPasteboard(targets)
     }
 
     @objc func handleCut(_ sender: NSMenuItem) {
         guard let file = sender.representedObject as? RemoteFile else { return }
-        viewModel.selectedFiles = [file.id]
+        let targets = targetFiles(for: file)
+        viewModel.selectedFiles = Set(targets.map(\.id))
         viewModel.cutSelectedFiles()
     }
 
@@ -452,6 +486,12 @@ extension NativeFileTableView.Coordinator {
         Task { @MainActor in
             await viewModel.paste()
         }
+    }
+
+    @objc func handleCopyPath(_ sender: NSMenuItem) {
+        guard let file = sender.representedObject as? RemoteFile else { return }
+        let targets = targetFiles(for: file)
+        viewModel.copyPathsToPasteboard(targets)
     }
 
     @objc func handleRename(_ sender: NSMenuItem) {
@@ -473,17 +513,211 @@ extension NativeFileTableView.Coordinator {
 
     @objc func handleDelete(_ sender: NSMenuItem) {
         guard let file = sender.representedObject as? RemoteFile else { return }
-        viewModel.confirmDelete([file])
+        viewModel.confirmDelete(targetFiles(for: file))
+    }
+
+    // MARK: System Pasteboard (Finder-style copy out)
+
+    /// Files up to this size are staged to a temp file so the system
+    /// pasteboard can hold a real file URL (which Finder reliably pastes).
+    /// NSFilePromiseProvider was tried first: Finder discovers the promise on
+    /// the pasteboard but never fulfils it, so paste does nothing.
+    private static let maxFinderCopyBytes: Int64 = 50 * 1024 * 1024
+
+    /// Copies the given files to the system pasteboard as local file URLs by
+    /// first downloading them to a temporary directory. Directories and files
+    /// over the size limit are skipped (they remain in the in-app clipboard
+    /// only). Runs async; the status-bar hint appears once written.
+    func copyTargetsToSystemPasteboard(_ files: [RemoteFile]) {
+        let candidates = files.filter { $0.isFile && $0.size <= Self.maxFinderCopyBytes }
+        guard !candidates.isEmpty else {
+            logDebug("Copy: nothing staged for Finder paste (directories only or files too large)", category: .app)
+            return
+        }
+
+        Task { @MainActor in
+            let staging = FileManager.default.temporaryDirectory
+                .appendingPathComponent("macSCPClipboard", isDirectory: true)
+            do {
+                try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+            } catch {
+                logError("Copy staging directory creation failed: \(error)", category: .app)
+                return
+            }
+
+            var urls: [NSURL] = []
+            for file in candidates {
+                let destination = staging.appendingPathComponent(file.name)
+                do {
+                    try await viewModel.downloadFileQuietly(file, destinationURL: destination)
+                    urls.append(NSURL(fileURLWithPath: destination.path))
+                } catch {
+                    logError("Copy staging failed for \(file.name): \(error)", category: .app)
+                }
+            }
+            guard !urls.isEmpty else { return }
+
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            let success = pasteboard.writeObjects(urls)
+            if success {
+                viewModel.noteSystemPasteboardCopy(count: urls.count)
+            }
+            logInfo("Copied \(urls.count) file(s) to system pasteboard as file URLs (write: \(success))", category: .app)
+        }
+    }
+
+    // MARK: Keyboard Handling (Finder-style shortcuts)
+
+    // ANSI key codes; used instead of charactersIgnoringModifiers because
+    // Option-modified keys produce alternate characters (⌥C → "ç").
+    private enum KeyCodes {
+        static let a: UInt16 = 0
+        static let x: UInt16 = 7
+        static let c: UInt16 = 8
+        static let v: UInt16 = 9
+        static let n: UInt16 = 45
+        static let delete: UInt16 = 51
+        static let returnKey: UInt16 = 36
+        static let keypadEnter: UInt16 = 76
+        static let space: UInt16 = 49
+    }
+
+    /// Returns true if the key event was handled as a browser shortcut.
+    func handleKeyDown(_ event: NSEvent) -> Bool {
+        let flags = event.modifierFlags
+            .intersection(.deviceIndependentFlagsMask)
+            .subtracting(.capsLock)
+        let hasCommand = flags.contains(.command)
+        let hasOption = flags.contains(.option)
+        let hasControl = flags.contains(.control)
+        let hasShift = flags.contains(.shift)
+
+        // ⇧⌘N / ⌥⌘N — New File. The menu item carries ⇧⌘N, but Shift+letter
+        // key equivalents don't dispatch reliably from SwiftUI commands (and
+        // ⇧⌘N is a popular global hotkey), so the table handles both directly.
+        if event.keyCode == KeyCodes.n, hasCommand, hasShift || hasOption, !hasControl {
+            logInfo("New File shortcut via table keyDown (shift: \(hasShift), option: \(hasOption))", category: .ui)
+            viewModel.newFile()
+            return true
+        }
+
+        // Plain keys (no modifiers)
+        if !hasCommand && !hasOption && !hasControl {
+            switch event.keyCode {
+            case KeyCodes.delete:
+                guard !viewModel.selectedFiles.isEmpty else { return false }
+                viewModel.confirmDeleteSelected()
+                return true
+            case KeyCodes.returnKey, KeyCodes.keypadEnter:
+                guard viewModel.selectedFilesList.count == 1,
+                      let file = viewModel.selectedFilesList.first else { return false }
+                viewModel.startRename(file)
+                return true
+            case KeyCodes.space:
+                guard viewModel.selectedFilesList.count == 1,
+                      let file = viewModel.selectedFilesList.first,
+                      file.isFile else { return false }
+                beginQuickLook(for: file)
+                return true
+            default:
+                break
+            }
+        }
+
+        switch (event.keyCode, hasCommand, hasOption, hasControl) {
+        case (KeyCodes.c, true, false, false): // ⌘C
+            guard !viewModel.selectedFiles.isEmpty else { return false }
+            viewModel.copySelectedFiles()
+            copyTargetsToSystemPasteboard(viewModel.selectedFilesList)
+            return true
+        case (KeyCodes.c, true, true, false): // ⌥⌘C — copy path
+            guard !viewModel.selectedFiles.isEmpty else { return false }
+            viewModel.copyPathsToPasteboard(viewModel.selectedFilesList)
+            return true
+        case (KeyCodes.x, true, false, false): // ⌘X
+            guard !viewModel.selectedFiles.isEmpty else { return false }
+            viewModel.cutSelectedFiles()
+            return true
+        case (KeyCodes.v, true, false, false): // ⌘V
+            Task { @MainActor in
+                await viewModel.paste()
+            }
+            return true
+        case (KeyCodes.a, true, false, false): // ⌘A — let NSTableView handle select-all
+            return false
+        default:
+            return false
+        }
+    }
+
+    // MARK: Quick Look (Space)
+
+    /// Stages the selected file locally and opens it in the system Quick Look
+    /// panel. The file must download first, so the panel opens after a short
+    /// delay on slow connections.
+    func beginQuickLook(for file: RemoteFile) {
+        guard file.size <= QuickLookConstants.maxPreviewBytes else {
+            logInfo("Quick Look skipped for \(file.name): larger than \(QuickLookConstants.maxPreviewBytes) bytes", category: .app)
+            return
+        }
+
+        Task { @MainActor in
+            do {
+                try FileManager.default.createDirectory(
+                    at: QuickLookConstants.stagingDirectory,
+                    withIntermediateDirectories: true
+                )
+                let destination = QuickLookConstants.stagingDirectory.appendingPathComponent(file.name)
+                try await viewModel.downloadFileQuietly(file, destinationURL: destination)
+                previewItems = [QuickLookPreviewItem(url: destination, title: file.name)]
+                QLPreviewPanel.shared()?.makeKeyAndOrderFront(nil)
+            } catch {
+                logError("Quick Look staging failed for \(file.name): \(error)", category: .app)
+            }
+        }
+    }
+
+    override func beginPreviewPanelControl(_ panel: QLPreviewPanel) {
+        panel.dataSource = self
+        panel.reloadData()
+    }
+
+    override func endPreviewPanelControl(_ panel: QLPreviewPanel) {
+        panel.dataSource = nil
     }
 }
 
-// MARK: - Context Menu Table View
+// MARK: - Quick Look Data Source
+extension NativeFileTableView.Coordinator: QLPreviewPanelDataSource {
+    func numberOfPreviewItems(in panel: QLPreviewPanel) -> Int {
+        previewItems.count
+    }
+
+    func previewPanel(_ panel: QLPreviewPanel, previewItemAt index: Int) -> any QLPreviewItem {
+        previewItems[index]
+    }
+}
+
+// MARK: - Context Menu & Keyboard Support
 protocol ContextMenuTableViewDelegate: AnyObject {
     func contextMenu(for row: Int) -> NSMenu?
 }
 
+protocol FileTableViewKeyHandling: AnyObject {
+    /// Returns true if the key event was consumed as a browser shortcut.
+    func handleKeyDown(_ event: NSEvent) -> Bool
+}
+
+/// Bridges QLPreviewPanel's responder-chain control to the coordinator.
+protocol PreviewPanelControlling: AnyObject {
+    func beginPreviewPanelControl(_ panel: QLPreviewPanel)
+    func endPreviewPanelControl(_ panel: QLPreviewPanel)
+}
+
 class ContextMenuTableView: NSTableView {
     weak var contextMenuDelegate: ContextMenuTableViewDelegate?
+    weak var keyDownDelegate: (FileTableViewKeyHandling & PreviewPanelControlling)?
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)
@@ -498,5 +732,22 @@ class ContextMenuTableView: NSTableView {
         }
 
         return super.menu(for: event)
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if keyDownDelegate?.handleKeyDown(event) == true { return }
+        super.keyDown(with: event)
+    }
+
+    // MARK: Quick Look (Space)
+
+    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel) -> Bool { true }
+
+    override func beginPreviewPanelControl(_ panel: QLPreviewPanel) {
+        keyDownDelegate?.beginPreviewPanelControl(panel)
+    }
+
+    override func endPreviewPanelControl(_ panel: QLPreviewPanel) {
+        keyDownDelegate?.endPreviewPanelControl(panel)
     }
 }

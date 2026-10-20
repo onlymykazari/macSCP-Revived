@@ -67,7 +67,8 @@ struct FileBrowserWindow: View {
             connectionType: data.connectionType,
             s3Region: data.s3Region,
             s3Bucket: data.s3Bucket,
-            s3Endpoint: data.s3Endpoint
+            s3Endpoint: data.s3Endpoint,
+            defaultRemotePath: data.defaultRemotePath
         )
 
         if data.connectionType == .s3 {

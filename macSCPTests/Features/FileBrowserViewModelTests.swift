@@ -379,4 +379,145 @@ final class FileBrowserViewModelTests: XCTestCase {
         XCTAssertEqual(sut.sortedFiles.count, 1)
         XCTAssertFalse(sut.sortedFiles.first?.isHidden ?? true)
     }
+
+    // MARK: - Quick Look Tests
+
+    func testDownloadFileQuietlyCallsRepository() async {
+        let file = RemoteFile(name: "a.txt", path: "/a.txt", isDirectory: false, size: 10, permissions: "-rw-r--r--")
+        await sut.connect()
+
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("macSCPTests-preview-a.txt")
+        try? await sut.downloadFileQuietly(file, destinationURL: destination)
+
+        XCTAssertTrue(mockFileRepository.downloadCalled)
+    }
+
+    // MARK: - Paste Naming Tests
+
+    func testUniqueCopyName_AddsCopySuffix() {
+        XCTAssertEqual(
+            FileBrowserViewModel.uniqueCopyName(for: "report.pdf", existing: ["report.pdf"]),
+            "report copy.pdf"
+        )
+        XCTAssertEqual(
+            FileBrowserViewModel.uniqueCopyName(for: "Makefile", existing: ["Makefile"]),
+            "Makefile copy"
+        )
+    }
+
+    func testUniqueCopyName_IncrementsUntilFree() {
+        let existing: Set<String> = ["a.txt", "a copy.txt", "a copy 2.txt"]
+        XCTAssertEqual(
+            FileBrowserViewModel.uniqueCopyName(for: "a.txt", existing: existing),
+            "a copy 3.txt"
+        )
+    }
+
+    // MARK: - Bookmark Tests
+
+    func testAddBookmark_SavesCurrentFolder() async {
+        // Given
+        let mockBookmarkRepository = MockBookmarkRepository()
+        sut = FileBrowserViewModel(
+            connection: testConnection,
+            sftpSession: mockSFTPSession,
+            fileRepository: mockFileRepository,
+            clipboardService: mockClipboardService,
+            password: "testpass",
+            bookmarkRepository: mockBookmarkRepository
+        )
+        mockFileRepository.mockFiles = []
+        await sut.connect()
+        // Mock session reports /home/user as the connected directory
+        XCTAssertEqual(sut.currentPath, "/home/user")
+
+        // When
+        await sut.addCurrentFolderToBookmarks()
+
+        // Then
+        XCTAssertTrue(mockBookmarkRepository.saveCalled)
+        XCTAssertEqual(sut.bookmarks.count, 1)
+        XCTAssertEqual(sut.bookmarks.first?.remotePath, "/home/user")
+        XCTAssertEqual(sut.bookmarks.first?.name, "user")
+    }
+
+    func testDeleteBookmark_RemovesFromList() async {
+        // Given
+        let mockBookmarkRepository = MockBookmarkRepository()
+        sut = FileBrowserViewModel(
+            connection: testConnection,
+            sftpSession: mockSFTPSession,
+            fileRepository: mockFileRepository,
+            clipboardService: mockClipboardService,
+            password: "testpass",
+            bookmarkRepository: mockBookmarkRepository
+        )
+        mockFileRepository.mockFiles = []
+        await sut.connect()
+        await sut.addCurrentFolderToBookmarks()
+        guard let bookmark = sut.bookmarks.first else {
+            return XCTFail("Expected a bookmark to exist")
+        }
+
+        // When
+        await sut.deleteBookmark(bookmark)
+
+        // Then
+        XCTAssertTrue(mockBookmarkRepository.deleteCalled)
+        XCTAssertTrue(sut.bookmarks.isEmpty)
+    }
+
+    func testRenameBookmark_UpdatesName() async {
+        // Given
+        let mockBookmarkRepository = MockBookmarkRepository()
+        sut = FileBrowserViewModel(
+            connection: testConnection,
+            sftpSession: mockSFTPSession,
+            fileRepository: mockFileRepository,
+            clipboardService: mockClipboardService,
+            password: "testpass",
+            bookmarkRepository: mockBookmarkRepository
+        )
+        mockFileRepository.mockFiles = []
+        await sut.connect()
+        await sut.addCurrentFolderToBookmarks()
+        guard let bookmark = sut.bookmarks.first else {
+            return XCTFail("Expected a bookmark to exist")
+        }
+
+        // When
+        await sut.renameBookmark(bookmark, to: "Production")
+
+        // Then
+        XCTAssertTrue(mockBookmarkRepository.updateCalled)
+        XCTAssertEqual(sut.bookmarks.first?.name, "Production")
+    }
+
+    // MARK: - Default Remote Path Tests
+
+    func testConnect_NavigatesToDefaultRemotePath() async {
+        // Given
+        let connection = Connection(
+            name: "Test Server",
+            host: "test.example.com",
+            username: "testuser",
+            defaultRemotePath: "/var/www"
+        )
+        sut = FileBrowserViewModel(
+            connection: connection,
+            sftpSession: mockSFTPSession,
+            fileRepository: mockFileRepository,
+            clipboardService: mockClipboardService,
+            password: "testpass"
+        )
+        mockFileRepository.mockFiles = []
+
+        // When
+        await sut.connect()
+
+        // Then
+        XCTAssertTrue(mockFileRepository.listFilesCalled)
+        XCTAssertEqual(mockFileRepository.lastListPath, "/var/www")
+    }
 }

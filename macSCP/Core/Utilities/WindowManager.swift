@@ -24,6 +24,7 @@ struct FileBrowserWindowData: Sendable {
     let s3Bucket: String?
     let s3Endpoint: String?
     let s3SecretAccessKey: String?
+    let defaultRemotePath: String?
 
     init(
         connectionId: UUID,
@@ -38,7 +39,8 @@ struct FileBrowserWindowData: Sendable {
         s3Region: String? = nil,
         s3Bucket: String? = nil,
         s3Endpoint: String? = nil,
-        s3SecretAccessKey: String? = nil
+        s3SecretAccessKey: String? = nil,
+        defaultRemotePath: String? = nil
     ) {
         self.connectionId = connectionId
         self.connectionName = connectionName
@@ -53,6 +55,7 @@ struct FileBrowserWindowData: Sendable {
         self.s3Bucket = s3Bucket
         self.s3Endpoint = s3Endpoint
         self.s3SecretAccessKey = s3SecretAccessKey
+        self.defaultRemotePath = defaultRemotePath
     }
 }
 

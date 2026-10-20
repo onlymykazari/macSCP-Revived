@@ -38,6 +38,9 @@ struct Connection: Identifiable, Hashable, Sendable, Codable, Transferable {
     var s3Bucket: String?
     var s3Endpoint: String?
 
+    /// Remote directory to open automatically after connecting (nil/empty = home)
+    var defaultRemotePath: String?
+
     init(
         id: UUID = UUID(),
         name: String,
@@ -56,7 +59,8 @@ struct Connection: Identifiable, Hashable, Sendable, Codable, Transferable {
         connectionType: ConnectionType = .sftp,
         s3Region: String? = nil,
         s3Bucket: String? = nil,
-        s3Endpoint: String? = nil
+        s3Endpoint: String? = nil,
+        defaultRemotePath: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -76,6 +80,7 @@ struct Connection: Identifiable, Hashable, Sendable, Codable, Transferable {
         self.s3Region = s3Region
         self.s3Bucket = s3Bucket
         self.s3Endpoint = s3Endpoint
+        self.defaultRemotePath = defaultRemotePath
     }
 
     // MARK: - Computed Properties

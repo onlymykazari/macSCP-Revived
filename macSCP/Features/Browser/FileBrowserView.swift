@@ -52,138 +52,11 @@ struct FileBrowserView: View {
             statusBar
         }
         .frame(minWidth: WindowSize.minFileBrowser.width, minHeight: WindowSize.minFileBrowser.height)
-        .background {
-            // Hidden Go to Folder shortcut (⇧⌘G), Finder-style
-            Button {
-                viewModel.showGoToFolder()
-            } label: {
-                Image(systemName: "folder")
-            }
-            .keyboardShortcut("g", modifiers: [.shift, .command])
-            .frame(width: 0, height: 0)
-            .opacity(0)
-            .accessibilityHidden(true)
-        }
+        .focusedSceneValue(\.browserViewModel, viewModel)
         .navigationTitle(viewModel.currentPath == "/" ? viewModel.connection.name : (viewModel.currentPath as NSString).lastPathComponent)
         .navigationSubtitle(viewModel.isConnected ? viewModel.connection.connectionString : "Disconnected")
         .toolbar(id: "browserToolbar") {
-            // Navigation group
-            ToolbarItem(id: "back", placement: .navigation) {
-                Button {
-                    Task { await viewModel.goBack() }
-                } label: {
-                    Image(systemName: "chevron.left")
-                }
-                .disabled(!viewModel.canGoBack)
-                .help("Go Back")
-            }
-
-            ToolbarItem(id: "forward", placement: .navigation) {
-                Button {
-                    Task { await viewModel.goForward() }
-                } label: {
-                    Image(systemName: "chevron.right")
-                }
-                .disabled(!viewModel.canGoForward)
-                .help("Go Forward")
-            }
-
-            // Primary actions
-            ToolbarItem(id: "newItem", placement: .primaryAction) {
-                Menu {
-                    Button {
-                        viewModel.isShowingNewFolderSheet = true
-                    } label: {
-                        Label("New Folder", systemImage: "folder.badge.plus")
-                    }
-
-                    Button {
-                        viewModel.isShowingNewFileSheet = true
-                    } label: {
-                        Label("New File", systemImage: "doc.badge.plus")
-                    }
-                } label: {
-                    Label("New", systemImage: "plus")
-                }
-                .help("New File or Folder")
-            }
-
-            ToolbarItem(id: "upload", placement: .primaryAction) {
-                Button {
-                    Task { await viewModel.uploadFiles() }
-                } label: {
-                    Label("Upload", systemImage: "square.and.arrow.up")
-                }
-                .help("Upload Files")
-            }
-
-            ToolbarItem(id: "delete", placement: .primaryAction) {
-                Button {
-                    viewModel.confirmDeleteSelected()
-                } label: {
-                    Label("Delete", systemImage: "trash")
-                }
-                .disabled(viewModel.selectedFiles.isEmpty)
-                .help("Delete Selected")
-            }
-
-            ToolbarItem(id: "spacer1", placement: .primaryAction) {
-                Spacer()
-            }
-
-            // Terminal button (SFTP only)
-            ToolbarItem(id: "terminal", placement: .primaryAction) {
-                if viewModel.connection.connectionType == .sftp {
-                    Button {
-                        viewModel.openTerminal()
-                    } label: {
-                        Label("Terminal", systemImage: "terminal")
-                    }
-                    .disabled(!viewModel.isConnected)
-                    .help("Open Terminal")
-                }
-            }
-
-            // Transfers
-            ToolbarItem(id: "transfers", placement: .primaryAction) {
-                TransfersToolbarButton(viewModel: viewModel)
-            }
-
-            // View options
-            ToolbarItem(id: "hiddenFiles", placement: .primaryAction) {
-                Toggle(isOn: $viewModel.showHiddenFiles) {
-                    Label(
-                        viewModel.showHiddenFiles ? "Hide Hidden Files" : "Show Hidden Files",
-                        systemImage: viewModel.showHiddenFiles ? "eye.fill" : "eye.slash"
-                    )
-                }
-                .help("Toggle Hidden Files")
-            }
-
-            ToolbarItem(id: "sort", placement: .primaryAction) {
-                Menu {
-                    ForEach(RemoteFile.SortCriteria.allCases, id: \.self) { criteria in
-                        Button {
-                            if viewModel.sortCriteria == criteria {
-                                viewModel.sortAscending.toggle()
-                            } else {
-                                viewModel.sortCriteria = criteria
-                                viewModel.sortAscending = true
-                            }
-                        } label: {
-                            HStack {
-                                Text(criteria.rawValue)
-                                if viewModel.sortCriteria == criteria {
-                                    Image(systemName: viewModel.sortAscending ? "chevron.up" : "chevron.down")
-                                }
-                            }
-                        }
-                    }
-                } label: {
-                    Label("Sort", systemImage: "arrow.up.arrow.down")
-                }
-                .help("Sort Options")
-            }
+            browserToolbar
         }
         .task {
             await viewModel.connect()
@@ -224,6 +97,22 @@ struct FileBrowserView: View {
                     onCancel: {
                         viewModel.isShowingRenameSheet = false
                         viewModel.fileToRename = nil
+                    }
+                )
+            }
+        }
+        .sheet(isPresented: $viewModel.isShowingRenameBookmarkSheet) {
+            if let bookmark = viewModel.bookmarkToRename {
+                NameInputSheet.rename(
+                    currentName: bookmark.name,
+                    onConfirm: { newName in
+                        Task {
+                            await viewModel.renameBookmark(bookmark, to: newName)
+                            viewModel.dismissBookmarkRename()
+                        }
+                    },
+                    onCancel: {
+                        viewModel.dismissBookmarkRename()
                     }
                 )
             }
@@ -291,6 +180,182 @@ struct FileBrowserView: View {
         }
     }
 
+    // MARK: - Toolbar
+
+    @ToolbarContentBuilder
+    private var browserToolbar: some CustomizableToolbarContent {
+        // Navigation group
+        ToolbarItem(id: "back", placement: .navigation) {
+                Button {
+                    Task { await viewModel.goBack() }
+                } label: {
+                    Image(systemName: "chevron.left")
+                }
+                .disabled(!viewModel.canGoBack)
+                .help("Go Back")
+            }
+
+            ToolbarItem(id: "forward", placement: .navigation) {
+                Button {
+                    Task { await viewModel.goForward() }
+                } label: {
+                    Image(systemName: "chevron.right")
+                }
+                .disabled(!viewModel.canGoForward)
+                .help("Go Forward")
+            }
+
+            // Primary actions
+            ToolbarItem(id: "newItem", placement: .primaryAction) {
+                Menu {
+                    Button {
+                        viewModel.isShowingNewFolderSheet = true
+                    } label: {
+                        Label("New Folder", systemImage: "folder.badge.plus")
+                    }
+
+                    Button {
+                        viewModel.isShowingNewFileSheet = true
+                    } label: {
+                        Label("New File", systemImage: "doc.badge.plus")
+                    }
+                } label: {
+                    Label("New", systemImage: "plus")
+                }
+                .help("New File or Folder")
+            }
+
+            ToolbarItem(id: "upload", placement: .primaryAction) {
+                Button {
+                    Task { await viewModel.uploadFiles() }
+                } label: {
+                    Label("Upload", systemImage: "square.and.arrow.up")
+                }
+                .help("Upload Files")
+            }
+
+            ToolbarItem(id: "delete", placement: .primaryAction) {
+                Button {
+                    viewModel.confirmDeleteSelected()
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+                .disabled(viewModel.selectedFiles.isEmpty)
+                .help("Delete Selected")
+            }
+
+            // Terminal button (SFTP only)
+            ToolbarItem(id: "terminal", placement: .primaryAction) {
+                if viewModel.connection.connectionType == .sftp {
+                    Button {
+                        viewModel.openTerminal()
+                    } label: {
+                        Label("Terminal", systemImage: "terminal")
+                    }
+                    .disabled(!viewModel.isConnected)
+                    .help("Open Terminal")
+                }
+            }
+
+            // Transfers
+            ToolbarItem(id: "transfers", placement: .primaryAction) {
+                TransfersToolbarButton(viewModel: viewModel)
+            }
+
+            // View options
+            ToolbarItem(id: "hiddenFiles", placement: .primaryAction) {
+                Toggle(isOn: $viewModel.showHiddenFiles) {
+                    Label(
+                        viewModel.showHiddenFiles ? "Hide Hidden Files" : "Show Hidden Files",
+                        systemImage: viewModel.showHiddenFiles ? "eye.fill" : "eye.slash"
+                    )
+                }
+                .help("Toggle Hidden Files")
+            }
+
+            ToolbarItem(id: "bookmarks", placement: .primaryAction) {
+                bookmarksMenu
+            }
+
+            ToolbarItem(id: "sort", placement: .primaryAction) {
+                sortMenu
+            }
+    }
+
+    private var sortMenu: some View {
+        Menu {
+            ForEach(RemoteFile.SortCriteria.allCases, id: \.self) { criteria in
+                Button {
+                    if viewModel.sortCriteria == criteria {
+                        viewModel.sortAscending.toggle()
+                    } else {
+                        viewModel.sortCriteria = criteria
+                        viewModel.sortAscending = true
+                    }
+                } label: {
+                    HStack {
+                        Text(criteria.rawValue)
+                        if viewModel.sortCriteria == criteria {
+                            Image(systemName: viewModel.sortAscending ? "chevron.up" : "chevron.down")
+                        }
+                    }
+                }
+            }
+        } label: {
+            Label("Sort", systemImage: "arrow.up.arrow.down")
+        }
+        .help("Sort Options")
+    }
+
+    // MARK: - Bookmarks Menu
+
+    private var bookmarksMenu: some View {
+        Menu {
+            Button {
+                Task { await viewModel.addCurrentFolderToBookmarks() }
+            } label: {
+                Label("Add Bookmark", systemImage: "bookmark")
+            }
+
+            if !viewModel.bookmarks.isEmpty {
+                Divider()
+
+                ForEach(viewModel.bookmarks) { bookmark in
+                    Button {
+                        Task { await viewModel.navigateTo(bookmark.remotePath) }
+                    } label: {
+                        Label(bookmark.name, systemImage: "folder")
+                    }
+                }
+
+                Divider()
+
+                Menu("Rename…") {
+                    ForEach(viewModel.bookmarks) { bookmark in
+                        Button(bookmark.name) {
+                            viewModel.bookmarkToRename = bookmark
+                            viewModel.isShowingRenameBookmarkSheet = true
+                        }
+                    }
+                }
+
+                Menu("Remove") {
+                    ForEach(viewModel.bookmarks) { bookmark in
+                        Button(role: .destructive) {
+                            Task { await viewModel.deleteBookmark(bookmark) }
+                        } label: {
+                            Text(bookmark.name)
+                        }
+                    }
+                }
+            }
+        } label: {
+            Label("Bookmarks", systemImage: "bookmark.fill")
+        }
+        .disabled(!viewModel.isConnected)
+        .help("Bookmarks")
+    }
+
     private var statusBar: some View {
         HStack(spacing: 12) {
             // Connection status
@@ -337,14 +402,7 @@ struct FileBrowserView: View {
     }
 
     private func openFileInEditor(_ file: RemoteFile) {
-        Task {
-            do {
-                let content = try await viewModel.getFileContent(file)
-                viewModel.openEditor(for: file, content: content)
-            } catch {
-                viewModel.error = AppError.from(error)
-            }
-        }
+        viewModel.openFileInEditor(file)
     }
 
     private func showFileInfo(_ file: RemoteFile) {

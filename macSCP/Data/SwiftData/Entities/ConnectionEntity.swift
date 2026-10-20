@@ -30,6 +30,9 @@ final class ConnectionEntity {
     var s3Bucket: String?
     var s3Endpoint: String?
 
+    // Remote directory opened automatically after connecting
+    var defaultRemotePath: String?
+
     var folder: FolderEntity?
 
     init(
@@ -49,7 +52,8 @@ final class ConnectionEntity {
         connectionType: String = "sftp",
         s3Region: String? = nil,
         s3Bucket: String? = nil,
-        s3Endpoint: String? = nil
+        s3Endpoint: String? = nil,
+        defaultRemotePath: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -68,5 +72,6 @@ final class ConnectionEntity {
         self.s3Region = s3Region
         self.s3Bucket = s3Bucket
         self.s3Endpoint = s3Endpoint
+        self.defaultRemotePath = defaultRemotePath
     }
 }

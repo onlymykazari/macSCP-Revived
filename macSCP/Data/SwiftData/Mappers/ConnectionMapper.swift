@@ -28,7 +28,8 @@ enum ConnectionMapper {
             connectionType: ConnectionType(rawValue: entity.connectionType) ?? .sftp,
             s3Region: entity.s3Region,
             s3Bucket: entity.s3Bucket,
-            s3Endpoint: entity.s3Endpoint
+            s3Endpoint: entity.s3Endpoint,
+            defaultRemotePath: entity.defaultRemotePath
         )
     }
 
@@ -49,6 +50,7 @@ enum ConnectionMapper {
         entity.s3Region = domain.s3Region
         entity.s3Bucket = domain.s3Bucket
         entity.s3Endpoint = domain.s3Endpoint
+        entity.defaultRemotePath = domain.defaultRemotePath
     }
 
     /// Creates a new ConnectionEntity from a Connection domain model
@@ -70,7 +72,8 @@ enum ConnectionMapper {
             connectionType: domain.connectionType.rawValue,
             s3Region: domain.s3Region,
             s3Bucket: domain.s3Bucket,
-            s3Endpoint: domain.s3Endpoint
+            s3Endpoint: domain.s3Endpoint,
+            defaultRemotePath: domain.defaultRemotePath
         )
     }
 }
