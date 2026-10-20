@@ -76,6 +76,22 @@ jobs:
             -exportPath build \
             -exportOptionsPlist exportOptions.plist
 
+      # Mirrors create-dmg.sh: the build-phase version stamp does not land on
+      # the exported copy, and a bare re-sign would drop every entitlement.
+      - name: Stamp version and re-sign with entitlements
+        run: |
+          APP="build/${{ env.APP_NAME }}.app"
+          ENT="build/resign-entitlements.plist"
+          codesign -d --entitlements - --xml "$APP" > "$ENT" 2>/dev/null
+          /usr/libexec/PlistBuddy -c "Add :com.apple.security.files.bookmarks.app-scope bool true" "$ENT" 2>/dev/null \
+            || /usr/libexec/PlistBuddy -c "Set :com.apple.security.files.bookmarks.app-scope true" "$ENT"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${{ steps.version.outputs.version }}" "$APP/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ steps.version.outputs.build_number }}" "$APP/Contents/Info.plist"
+          codesign --force --sign - --timestamp=none --entitlements "$ENT" "$APP"
+          codesign -d --entitlements - --xml "$APP" 2>/dev/null | grep -q "com.apple.security.app-sandbox" \
+            || { echo "ERROR: entitlements lost on re-sign"; exit 1; }
+          echo "Stamped $(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist") build $(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$APP/Contents/Info.plist")"
+
       - name: Create DMG
         run: |
           DMG_NAME="${{ env.APP_NAME }}-${{ steps.version.outputs.version }}.dmg"

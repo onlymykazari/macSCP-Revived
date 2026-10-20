@@ -3,7 +3,7 @@
 All notable changes to macSCP-Revived are documented here.
 Pre-1.0.0 history of the original macSCP lives in [release.md](release.md) and the upstream [releases page](https://github.com/macnev2013/macSCP/releases).
 
-## [Unreleased]
+## [1.1.0] — 2026-10-21
 
 ### Added
 - **Diagnostics pane** (Settings → Diagnostics): shows the exact build identity (version, build number, Debug/Release), a Verbose Logging toggle, and Export Logs… — app logs are now also written to an on-disk file that survives relaunches (info-level always, debug-level when verbose), with a session marker per launch so bug reports carry the full picture.
