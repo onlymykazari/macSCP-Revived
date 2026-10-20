@@ -32,6 +32,7 @@ final class ConnectionListViewModel {
     var isShowingNewFolderSheet = false
     var isShowingPasswordPrompt = false
     var isShowingDeleteFolderAlert = false
+    var isShowingSSHConfigImportSheet = false
 
     // Editing state
     var connectionToEdit: Connection?
@@ -126,6 +127,45 @@ final class ConnectionListViewModel {
 
     func refresh() async {
         await loadData()
+    }
+
+    // MARK: - ssh config Import
+
+    /// Imports parsed ssh config hosts as connections. Duplicates (by name)
+    /// are skipped; returns (imported, skipped) counts for feedback.
+    @discardableResult
+    func importSSHConfigHosts(_ parsedHosts: [ParsedSSHHost]) async -> (imported: Int, skipped: Int) {
+        var imported = 0
+        var skipped = 0
+
+        for parsed in parsedHosts {
+            guard !connections.contains(where: { $0.name == parsed.name }) else {
+                skipped += 1
+                continue
+            }
+
+            let connection = Connection(
+                name: parsed.name,
+                host: parsed.host,
+                port: parsed.port,
+                username: parsed.suggestedUsername,
+                authMethod: parsed.authMethod,
+                privateKeyPath: parsed.identityFile,
+                savePassword: false
+            )
+
+            do {
+                try await connectionRepository.save(connection)
+                imported += 1
+            } catch {
+                logError("Failed to import connection \(parsed.name): \(error)", category: .database)
+            }
+        }
+
+        isShowingSSHConfigImportSheet = false
+        await loadData()
+        logInfo("ssh config import finished: \(imported) imported, \(skipped) skipped", category: .ui)
+        return (imported, skipped)
     }
 
     // MARK: - Connection Actions
@@ -357,7 +397,8 @@ final class ConnectionListViewModel {
             s3Region: connection.s3Region,
             s3Bucket: connection.s3Bucket,
             s3Endpoint: connection.s3Endpoint,
-            s3SecretAccessKey: connection.connectionType == .s3 ? password : nil
+            s3SecretAccessKey: connection.connectionType == .s3 ? password : nil,
+            defaultRemotePath: connection.defaultRemotePath
         )
 
         let windowId = windowManager.storeFileBrowserData(data)

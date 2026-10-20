@@ -22,6 +22,8 @@ struct BackupPayload: Codable {
     var folders: [Folder]
     var credentials: [BackupCredential]
     var settings: BackupSettings?
+    /// nil when the backup predates bookmark support
+    var bookmarks: [Bookmark]?
 }
 
 /// Keychain credentials for a single connection

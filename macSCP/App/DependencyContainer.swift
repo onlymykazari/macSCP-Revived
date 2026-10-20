@@ -36,6 +36,10 @@ final class DependencyContainer: ObservableObject {
         FolderRepository(dataStore: dataStore)
     }()
 
+    lazy var bookmarkRepository: BookmarkRepositoryProtocol = {
+        BookmarkRepository(dataStore: dataStore)
+    }()
+
     // MARK: - Services
     lazy var appLockManager: AppLockManager = {
         AppLockManager.shared
@@ -89,6 +93,7 @@ final class DependencyContainer: ObservableObject {
             service: BackupService(
                 connectionRepository: connectionRepository,
                 folderRepository: folderRepository,
+                bookmarkRepository: bookmarkRepository,
                 keychainService: keychainService,
                 settingsStore: AppLockSettingsStore(appLock: appLockManager)
             )
@@ -106,7 +111,8 @@ final class DependencyContainer: ObservableObject {
             sftpSession: sftpSession,
             fileRepository: fileRepository,
             clipboardService: clipboardService,
-            password: password
+            password: password,
+            bookmarkRepository: bookmarkRepository
         )
     }
 
@@ -121,7 +127,8 @@ final class DependencyContainer: ObservableObject {
             s3Session: s3Session,
             fileRepository: fileRepository,
             clipboardService: clipboardService,
-            secretAccessKey: secretAccessKey
+            secretAccessKey: secretAccessKey,
+            bookmarkRepository: bookmarkRepository
         )
     }
 

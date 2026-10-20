@@ -12,17 +12,20 @@ import Foundation
 final class BackupService {
     private let connectionRepository: ConnectionRepositoryProtocol
     private let folderRepository: FolderRepositoryProtocol
+    private let bookmarkRepository: BookmarkRepositoryProtocol?
     private let keychainService: KeychainServiceProtocol
     private let settingsStore: BackupSettingsStore
 
     init(
         connectionRepository: ConnectionRepositoryProtocol,
         folderRepository: FolderRepositoryProtocol,
+        bookmarkRepository: BookmarkRepositoryProtocol? = nil,
         keychainService: KeychainServiceProtocol,
         settingsStore: BackupSettingsStore
     ) {
         self.connectionRepository = connectionRepository
         self.folderRepository = folderRepository
+        self.bookmarkRepository = bookmarkRepository
         self.keychainService = keychainService
         self.settingsStore = settingsStore
     }
@@ -32,6 +35,12 @@ final class BackupService {
     func buildPayload(includeCredentials: Bool, includeSettings: Bool) async throws -> BackupPayload {
         let connections = try await connectionRepository.fetchAll()
         let folders = try await folderRepository.fetchAll()
+
+        var bookmarks: [Bookmark]? = nil
+        if let bookmarkRepository {
+            let exportedIds = Set(connections.map(\.id))
+            bookmarks = try await bookmarkRepository.fetchAll().filter { exportedIds.contains($0.connectionId) }
+        }
 
         var credentials: [BackupCredential] = []
         if includeCredentials {
@@ -55,7 +64,8 @@ final class BackupService {
             connections: connections,
             folders: folders,
             credentials: credentials,
-            settings: includeSettings ? settingsStore.read() : nil
+            settings: includeSettings ? settingsStore.read() : nil,
+            bookmarks: bookmarks
         )
     }
 
@@ -97,6 +107,7 @@ final class BackupService {
                 folderIdMap: folderIdMap,
                 result: &result
             )
+            try await mergeBookmarks(payload.bookmarks ?? [])
         }
 
         try applyCredentials(payload.credentials, eligibleIds: credentialEligibleIds)
@@ -124,6 +135,11 @@ final class BackupService {
         for folder in try await folderRepository.fetchAll() {
             try await folderRepository.delete(id: folder.id)
         }
+        if let bookmarkRepository {
+            for bookmark in try await bookmarkRepository.fetchAll() {
+                try await bookmarkRepository.delete(id: bookmark.id)
+            }
+        }
     }
 
     private func insertAll(_ payload: BackupPayload, result: inout RestoreResult) async throws {
@@ -134,6 +150,29 @@ final class BackupService {
         for connection in payload.connections {
             try await connectionRepository.save(connection)
             result.connectionsAdded += 1
+        }
+        if let bookmarkRepository {
+            for bookmark in payload.bookmarks ?? [] {
+                try await bookmarkRepository.save(bookmark)
+            }
+        }
+    }
+
+    /// Restores bookmarks on merge. Bookmark ids and connection ids are stable
+    /// across merge (only folder ids get remapped), so entries whose
+    /// connection no longer exists locally are skipped.
+    private func mergeBookmarks(_ bookmarks: [Bookmark]) async throws {
+        guard let bookmarkRepository, !bookmarks.isEmpty else { return }
+
+        let localConnectionIds = Set(try await connectionRepository.fetchAll().map(\.id))
+        let existingBookmarkIds = Set(try await bookmarkRepository.fetchAll().map(\.id))
+
+        for bookmark in bookmarks where localConnectionIds.contains(bookmark.connectionId) {
+            if existingBookmarkIds.contains(bookmark.id) {
+                try await bookmarkRepository.update(bookmark)
+            } else {
+                try await bookmarkRepository.save(bookmark)
+            }
         }
     }
 

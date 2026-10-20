@@ -67,6 +67,7 @@ struct ConnectionListView: View {
         }
         .navigationTitle("")
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        .focusedSceneValue(\.connectionListViewModel, viewModel)
         .searchable(text: $viewModel.searchText, prompt: "Search connections")
         .onChange(of: viewModel.selectedSidebarItem) {
             viewModel.selectedConnectionId = nil
@@ -85,6 +86,19 @@ struct ConnectionListView: View {
                 },
                 onCancel: {
                     viewModel.isShowingNewConnectionSheet = false
+                }
+            )
+        }
+        .sheet(isPresented: $viewModel.isShowingSSHConfigImportSheet) {
+            SSHConfigImportSheet(
+                existingNames: Set(viewModel.connections.map(\.name)),
+                onImport: { hosts in
+                    Task {
+                        await viewModel.importSSHConfigHosts(hosts)
+                    }
+                },
+                onCancel: {
+                    viewModel.isShowingSSHConfigImportSheet = false
                 }
             )
         }

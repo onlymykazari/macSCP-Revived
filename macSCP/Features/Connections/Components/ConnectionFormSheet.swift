@@ -56,6 +56,9 @@ struct ConnectionFormSheet: View {
     @State private var s3Endpoint: String = ""
     @State private var s3SecretAccessKey: String = ""
 
+    // Default remote directory
+    @State private var defaultRemotePath: String = ""
+
     init(
         mode: ConnectionFormMode,
         savedPassword: String? = nil,
@@ -192,6 +195,8 @@ struct ConnectionFormSheet: View {
 
                 // Optional
                 Section("Optional") {
+                    TextField("Initial Remote Path (e.g. /var/www)", text: $defaultRemotePath)
+
                     TextField("Description", text: $description, axis: .vertical)
                         .lineLimit(2...4)
 
@@ -263,6 +268,7 @@ struct ConnectionFormSheet: View {
             s3Region = connection.s3Region ?? "us-east-1"
             s3Bucket = connection.s3Bucket ?? ""
             s3Endpoint = connection.s3Endpoint ?? ""
+            defaultRemotePath = connection.defaultRemotePath ?? ""
 
             if let saved = savedPassword {
                 if selectedType == .s3 {
@@ -299,7 +305,8 @@ struct ConnectionFormSheet: View {
                 connectionType: selectedType,
                 s3Region: selectedType == .s3 ? s3Region.trimmed : nil,
                 s3Bucket: selectedType == .s3 ? s3Bucket.trimmed : nil,
-                s3Endpoint: selectedType == .s3 && !s3Endpoint.trimmed.isEmpty ? s3Endpoint.trimmed : nil
+                s3Endpoint: selectedType == .s3 && !s3Endpoint.trimmed.isEmpty ? s3Endpoint.trimmed : nil,
+                defaultRemotePath: defaultRemotePath.trimmed.isEmpty ? nil : defaultRemotePath.trimmed
             )
         } else {
             connection = Connection(
@@ -317,7 +324,8 @@ struct ConnectionFormSheet: View {
                 connectionType: selectedType,
                 s3Region: selectedType == .s3 ? s3Region.trimmed : nil,
                 s3Bucket: selectedType == .s3 ? s3Bucket.trimmed : nil,
-                s3Endpoint: selectedType == .s3 && !s3Endpoint.trimmed.isEmpty ? s3Endpoint.trimmed : nil
+                s3Endpoint: selectedType == .s3 && !s3Endpoint.trimmed.isEmpty ? s3Endpoint.trimmed : nil,
+                defaultRemotePath: defaultRemotePath.trimmed.isEmpty ? nil : defaultRemotePath.trimmed
             )
         }
 
@@ -337,9 +345,10 @@ struct ConnectionFormSheet: View {
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
-        panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".ssh")
+        panel.directoryURL = URL(fileURLWithPath: FileManager.realHomeDirectory).appendingPathComponent(".ssh")
 
         if panel.runModal() == .OK, let url = panel.url {
+            SecurityScopedAccess.shared.remember(url)
             privateKeyPath = url.path
         }
     }

@@ -42,6 +42,13 @@ struct ConnectionListColumn: View {
                     Label("New Connection", systemImage: "square.and.pencil")
                 }
                 .help("New Connection")
+
+                Button {
+                    viewModel.isShowingSSHConfigImportSheet = true
+                } label: {
+                    Label("Import from ssh config", systemImage: "square.and.arrow.down.on.square")
+                }
+                .help("Import connections from an ssh config file")
             }
         }
     }
