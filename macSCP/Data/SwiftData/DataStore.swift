@@ -18,7 +18,8 @@ final class DataStore {
         do {
             let schema = Schema([
                 ConnectionEntity.self,
-                FolderEntity.self
+                FolderEntity.self,
+                BookmarkEntity.self
             ])
 
             let modelConfiguration = ModelConfiguration(
