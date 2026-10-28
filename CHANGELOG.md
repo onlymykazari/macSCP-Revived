@@ -3,6 +3,13 @@
 All notable changes to macSCP-Revived are documented here.
 Pre-1.0.0 history of the original macSCP lives in [release.md](release.md) and the upstream [releases page](https://github.com/macnev2013/macSCP/releases).
 
+## [1.2.0] — 2026-10-29
+
+### Added
+- **`macscp://` URL scheme** (Settings → URL Scheme): other apps on this Mac can open a saved connection or bookmark directly — `open 'macscp://open?connection=Web&view=terminal&path=/var/log'`. `connection` takes a saved connection's name or id, `bookmark` a bookmark name (its remote path becomes the start path), `view` picks the file browser (default) or the terminal, `path` overrides the start directory, and `new=1` forces a fresh window instead of bringing an already open one to the front. Launches go through the same biometric gate and saved credentials as in-app connects; passwords are never part of a URL. Ambiguous names show a picker; unknown ones show an error.
+- **Terminal start directory**: terminals can now open in a given remote directory (currently via the URL scheme's `path` parameter); the directory change is typed into the PTY as the shell's first input.
+- The connection list window consumes launch requests at startup, so `macscp://` links work on a cold launch; with no main window open, one is reopened automatically.
+
 ## [1.1.0] — 2026-10-21
 
 ### Added
