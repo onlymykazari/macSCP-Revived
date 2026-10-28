@@ -5,6 +5,24 @@
         <description>Most recent changes with links to updates.</description>
         <language>en</language>
         <item>
+        <title>Version 1.2.0</title>
+        <pubDate>Wed, 28 Oct 2026 21:17:58 +0000</pubDate>
+        <sparkle:version>202610282051</sparkle:version>
+        <sparkle:shortVersionString>1.2.0</sparkle:shortVersionString>
+        <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+        <description><![CDATA[
+            <ul>
+                <li>See release notes on GitHub</li>
+            </ul>
+        ]]></description>
+        <enclosure
+            url="https://github.com/onlymykazari/macSCP-Revived/releases/download/v1.2.0/macSCP-Revived-1.2.0.dmg"
+            type="application/octet-stream"
+            sparkle:edSignature="hYUCkhwzL8O7QcWXm+OGoGrGtLglmoTUDhog1m/159m3CXMjDWLWpbTvxu+ihohiKl2+etKK4yb4OoQocUgTDw=="
+            length="23773995"
+        />
+    </item>
+        <item>
         <title>Version 1.1.0</title>
         <pubDate>Tue, 20 Oct 2026 21:58:09 +0000</pubDate>
         <sparkle:version>202610202142</sparkle:version>
