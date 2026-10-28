@@ -124,6 +124,8 @@ struct TerminalWindowData: Sendable {
     let password: String
     let authMethod: AuthMethod
     let privateKeyPath: String?
+    /// Remote directory to cd into once the PTY is up (nil = server default).
+    let initialPath: String?
 
     init(
         connectionId: UUID,
@@ -133,7 +135,8 @@ struct TerminalWindowData: Sendable {
         username: String,
         password: String,
         authMethod: AuthMethod,
-        privateKeyPath: String?
+        privateKeyPath: String?,
+        initialPath: String? = nil
     ) {
         self.connectionId = connectionId
         self.connectionName = connectionName
@@ -143,6 +146,7 @@ struct TerminalWindowData: Sendable {
         self.password = password
         self.authMethod = authMethod
         self.privateKeyPath = privateKeyPath
+        self.initialPath = initialPath
     }
 }
 
@@ -159,10 +163,13 @@ final class WindowManager: ObservableObject {
     private init() {}
 
     // MARK: - File Browser Window
-    func storeFileBrowserData(_ data: FileBrowserWindowData) -> String {
-        let id = UUID().uuidString
-        fileBrowserData[id] = data
-        return id
+    /// Stores browser window data. Passing an explicit `id` makes the call
+    /// idempotent under that key; re-opening a window with the same value then
+    /// reuses (activates) the existing window instead of stacking duplicates.
+    func storeFileBrowserData(_ data: FileBrowserWindowData, id: String? = nil) -> String {
+        let key = id ?? UUID().uuidString
+        fileBrowserData[key] = data
+        return key
     }
 
     func getFileBrowserData(for id: String) -> FileBrowserWindowData? {
@@ -204,10 +211,11 @@ final class WindowManager: ObservableObject {
     }
 
     // MARK: - Terminal Window
-    func storeTerminalData(_ data: TerminalWindowData) -> String {
-        let id = UUID().uuidString
-        terminalData[id] = data
-        return id
+    /// See `storeFileBrowserData(_:id:)` for the explicit-id semantics.
+    func storeTerminalData(_ data: TerminalWindowData, id: String? = nil) -> String {
+        let key = id ?? UUID().uuidString
+        terminalData[key] = data
+        return key
     }
 
     func getTerminalData(for id: String) -> TerminalWindowData? {

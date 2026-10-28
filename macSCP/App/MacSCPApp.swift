@@ -11,6 +11,7 @@ import Sparkle
 
 @main
 struct MacSCPApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var container = DependencyContainer.shared
 
     private let updaterController: SPUStandardUpdaterController

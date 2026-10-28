@@ -83,6 +83,7 @@ final class DependencyContainer: ObservableObject {
         ConnectionListViewModel(
             connectionRepository: connectionRepository,
             folderRepository: folderRepository,
+            bookmarkRepository: bookmarkRepository,
             keychainService: keychainService,
             windowManager: windowManager
         )

@@ -125,6 +125,7 @@ macSCP-Revived is a modern, native macOS application built with SwiftUI that pro
 - **Quick Access**: Launch terminal from connection list or file browser toolbar
 
 ### 🛠️ **Developer-Friendly**
+- **URL Scheme Launch**: other apps on the same Mac can open a saved connection in the file browser or terminal via `macscp://` links — see the [URL Scheme Reference](docs/url-scheme.md)
 - **SwiftData Persistence**: Modern data persistence using SwiftData
 - **Citadel SFTP**: Built on the robust Citadel SSH/SFTP library
 - **NIO Foundation**: Leverages SwiftNIO for high-performance networking

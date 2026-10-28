@@ -34,6 +34,10 @@ final class ConnectionListViewModel {
     var isShowingDeleteFolderAlert = false
     var isShowingSSHConfigImportSheet = false
 
+    /// Non-nil when an external launch matched several connections/bookmarks
+    /// by name; the sheet lets the user pick one and resumes the launch.
+    var externalLaunchChoicesSheet: ExternalLaunchChoicesSheet?
+
     // Editing state
     var connectionToEdit: Connection?
     var connectionToConnect: Connection?
@@ -43,9 +47,14 @@ final class ConnectionListViewModel {
     var pendingWindowId: String?
     var pendingTerminalWindowId: String?
 
+    /// External-launch extras that must survive the password-prompt detour:
+    /// the requested start path and deterministic window ids.
+    private var pendingExternalLaunch: ExternalLaunchContext?
+
     // MARK: - Dependencies
     private let connectionRepository: ConnectionRepositoryProtocol
     private let folderRepository: FolderRepositoryProtocol
+    private let bookmarkRepository: BookmarkRepositoryProtocol
     private let keychainService: KeychainServiceProtocol
     private let windowManager: WindowManager
 
@@ -53,11 +62,13 @@ final class ConnectionListViewModel {
     init(
         connectionRepository: ConnectionRepositoryProtocol,
         folderRepository: FolderRepositoryProtocol,
+        bookmarkRepository: BookmarkRepositoryProtocol,
         keychainService: KeychainServiceProtocol,
         windowManager: WindowManager
     ) {
         self.connectionRepository = connectionRepository
         self.folderRepository = folderRepository
+        self.bookmarkRepository = bookmarkRepository
         self.keychainService = keychainService
         self.windowManager = windowManager
     }
@@ -333,6 +344,10 @@ final class ConnectionListViewModel {
     // MARK: - Connection Operations
 
     func connectToServer(_ connection: Connection) {
+        connectToServer(connection, external: nil)
+    }
+
+    func connectToServer(_ connection: Connection, external: ExternalLaunchContext?) {
         logInfo("Connect requested for: \(connection.name)", category: .ui)
 
         Task { @MainActor in
@@ -344,6 +359,7 @@ final class ConnectionListViewModel {
             }
 
             connectionToConnect = connection
+            pendingExternalLaunch = external
 
             if connection.connectionType == .s3 {
                 // For S3, check for saved credentials
@@ -381,9 +397,15 @@ final class ConnectionListViewModel {
     func cancelConnect() {
         isShowingPasswordPrompt = false
         connectionToConnect = nil
+        pendingExternalLaunch = nil
     }
 
     private func openFileBrowser(for connection: Connection, password: String) {
+        // Consume the external-launch context exactly once; normal (in-app)
+        // connects pass through with nil and keep the original behavior.
+        let launch = pendingExternalLaunch
+        pendingExternalLaunch = nil
+
         let data = FileBrowserWindowData(
             connectionId: connection.id,
             connectionName: connection.name,
@@ -398,10 +420,10 @@ final class ConnectionListViewModel {
             s3Bucket: connection.s3Bucket,
             s3Endpoint: connection.s3Endpoint,
             s3SecretAccessKey: connection.connectionType == .s3 ? password : nil,
-            defaultRemotePath: connection.defaultRemotePath
+            defaultRemotePath: launch?.remotePathOverride ?? connection.defaultRemotePath
         )
 
-        let windowId = windowManager.storeFileBrowserData(data)
+        let windowId = windowManager.storeFileBrowserData(data, id: launch?.browserWindowId)
         logInfo("Stored window data with ID: \(windowId)", category: .ui)
         pendingWindowId = windowId
         AnalyticsService.trackConnectionConnected(protocol: .init(from: connection.connectionType), success: true)
@@ -425,6 +447,10 @@ final class ConnectionListViewModel {
             return
         }
 
+        // Consume the external-launch context exactly once.
+        let launch = pendingExternalLaunch
+        pendingExternalLaunch = nil
+
         let data = TerminalWindowData(
             connectionId: connection.id,
             connectionName: connection.name,
@@ -433,15 +459,20 @@ final class ConnectionListViewModel {
             username: connection.username,
             password: password,
             authMethod: connection.authMethod,
-            privateKeyPath: connection.privateKeyPath
+            privateKeyPath: connection.privateKeyPath,
+            initialPath: launch?.remotePathOverride
         )
 
-        let windowId = windowManager.storeTerminalData(data)
+        let windowId = windowManager.storeTerminalData(data, id: launch?.terminalWindowId)
         logInfo("Stored terminal window data with ID: \(windowId)", category: .ui)
         pendingTerminalWindowId = windowId
     }
 
     func requestTerminal(for connection: Connection) {
+        requestTerminal(for: connection, external: nil)
+    }
+
+    func requestTerminal(for connection: Connection, external: ExternalLaunchContext?) {
         if connection.connectionType == .s3 {
             logWarning("Terminal not supported for S3 connections", category: .ui)
             return
@@ -456,6 +487,7 @@ final class ConnectionListViewModel {
             }
 
             connectionToConnect = connection
+            pendingExternalLaunch = external
 
             // Check for saved password
             if let savedPassword = keychainService.getPassword(for: connection.id) {
@@ -476,6 +508,163 @@ final class ConnectionListViewModel {
         openTerminal(for: connection, password: password)
         isShowingPasswordPrompt = false
         connectionToConnect = nil
+    }
+
+    // MARK: - External Launch
+
+    func handleExternalLaunch(_ outcome: ExternalLaunchOutcome) {
+        switch outcome {
+        case .request(let request):
+            Task { await performExternalLaunch(request) }
+        case .rejected(let message, let url):
+            logWarning("ExternalLaunch rejected: \(message) (\(url))", category: .app)
+            error = AppError.externalLaunchRejected(message)
+        }
+    }
+
+    func resolveExternalLaunchChoice(_ choice: ExternalLaunchChoice) {
+        externalLaunchChoicesSheet = nil
+        guard let context = pendingExternalLaunchChoiceContext else { return }
+        pendingExternalLaunchChoiceContext = nil
+        continueExternalLaunch(
+            connection: choice.connection,
+            path: choice.path,
+            view: context.view,
+            forceNew: context.forceNew
+        )
+    }
+
+    func cancelExternalLaunchChoice() {
+        externalLaunchChoicesSheet = nil
+        pendingExternalLaunchChoiceContext = nil
+    }
+
+    private var pendingExternalLaunchChoiceContext: (view: ExternalLaunchView, forceNew: Bool)?
+
+    private static var isExternalLaunchEnabled: Bool {
+        UserDefaults.standard.object(forKey: ExternalLaunchRequest.enabledDefaultsKey) == nil
+            || UserDefaults.standard.bool(forKey: ExternalLaunchRequest.enabledDefaultsKey)
+    }
+
+    private func performExternalLaunch(_ request: ExternalLaunchRequest) async {
+        guard Self.isExternalLaunchEnabled else {
+            error = AppError.externalLaunchRejected("Launching macSCP from URLs is disabled in Settings.")
+            return
+        }
+
+        logInfo("ExternalLaunch: handling \(request.sourceURL)", category: .app)
+
+        // A cold launch can reach here before the initial load has finished.
+        await loadData()
+
+        var resolved: (connection: Connection, path: String?)?
+
+        switch request.target {
+        case .connectionId(let id):
+            guard let connection = connections.first(where: { $0.id == id }) else {
+                error = AppError.externalLaunchRejected("No saved connection with id \(id.uuidString).")
+                return
+            }
+            resolved = (connection, request.path)
+
+        case .connectionName(let name):
+            let matches = connections.filter { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+            guard !matches.isEmpty else {
+                error = AppError.externalLaunchRejected("No saved connection named '\(name)'.")
+                return
+            }
+            if matches.count > 1 {
+                presentExternalLaunchChoices(
+                    matches.map { ExternalLaunchChoice(connection: $0, path: request.path) },
+                    view: request.view,
+                    forceNew: request.forceNew
+                )
+                return
+            }
+            resolved = (matches[0], request.path)
+
+        case .bookmarkName(let name):
+            let hits: [Bookmark]
+            do {
+                hits = try await bookmarkRepository.fetchAll()
+                    .filter { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+            } catch {
+                self.error = AppError.from(error)
+                return
+            }
+            guard !hits.isEmpty else {
+                error = AppError.externalLaunchRejected("No saved bookmark named '\(name)'.")
+                return
+            }
+            if hits.count > 1 {
+                // The same bookmark name may exist on several connections.
+                let hitsByConnection = Dictionary(grouping: hits, by: \.connectionId)
+                let candidates = connections.filter { hitsByConnection[$0.id] != nil }
+                guard !candidates.isEmpty else {
+                    error = AppError.externalLaunchRejected("The bookmark '\(name)' belongs to connections that no longer exist.")
+                    return
+                }
+                let choices = candidates.map { connection in
+                    ExternalLaunchChoice(
+                        connection: connection,
+                        path: request.path ?? hitsByConnection[connection.id]?.first?.remotePath
+                    )
+                }
+                presentExternalLaunchChoices(choices, view: request.view, forceNew: request.forceNew)
+                return
+            }
+            guard let connection = connections.first(where: { $0.id == hits[0].connectionId }) else {
+                error = AppError.externalLaunchRejected("The bookmark '\(name)' belongs to a connection that no longer exists.")
+                return
+            }
+            resolved = (connection, request.path ?? hits[0].remotePath)
+        }
+
+        guard let resolved else { return }
+        continueExternalLaunch(
+            connection: resolved.connection,
+            path: resolved.path,
+            view: request.view,
+            forceNew: request.forceNew
+        )
+    }
+
+    private func continueExternalLaunch(
+        connection: Connection,
+        path: String?,
+        view: ExternalLaunchView,
+        forceNew: Bool
+    ) {
+        switch view {
+        case .files:
+            let external = ExternalLaunchContext(
+                remotePathOverride: path,
+                browserWindowId: forceNew ? nil : "ext-browser-\(connection.id.uuidString)",
+                terminalWindowId: nil
+            )
+            connectToServer(connection, external: external)
+
+        case .terminal:
+            guard connection.connectionType == .sftp else {
+                error = AppError.externalLaunchRejected("A terminal is only available for SFTP connections.")
+                return
+            }
+            let external = ExternalLaunchContext(
+                remotePathOverride: path,
+                browserWindowId: nil,
+                terminalWindowId: forceNew ? nil : "ext-terminal-\(connection.id.uuidString)"
+            )
+            requestTerminal(for: connection, external: external)
+        }
+    }
+
+    private func presentExternalLaunchChoices(
+        _ choices: [ExternalLaunchChoice],
+        view: ExternalLaunchView,
+        forceNew: Bool
+    ) {
+        pendingExternalLaunchChoiceContext = (view, forceNew)
+        externalLaunchChoicesSheet = ExternalLaunchChoicesSheet(choices: choices)
     }
 
     // MARK: - Edit Actions

@@ -60,6 +60,9 @@ enum AppError: LocalizedError, Sendable {
     case backupInvalidFile
     case backupWrongPassword
 
+    // External launch errors
+    case externalLaunchRejected(String)
+
     // General errors
     case unknown(String)
     case notConnected
@@ -142,6 +145,9 @@ enum AppError: LocalizedError, Sendable {
             return "The file is not a valid macSCP-Revived backup"
         case .backupWrongPassword:
             return "Wrong password, or the backup file has been modified"
+
+        case .externalLaunchRejected(let message):
+            return message
 
         case .unknown(let message):
             return message

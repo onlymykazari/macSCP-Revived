@@ -74,6 +74,27 @@ struct ConnectionListView: View {
         }
         .task {
             await viewModel.loadData()
+            consumeExternalLaunchQueue()
+        }
+        .onAppear {
+            ExternalLaunchQueue.mainWindowAlive = true
+        }
+        .onDisappear {
+            ExternalLaunchQueue.mainWindowAlive = false
+        }
+        .onReceive(NotificationCenter.default.publisher(for: ExternalLaunchQueue.pokeNotification)) { _ in
+            consumeExternalLaunchQueue()
+        }
+        .sheet(item: $viewModel.externalLaunchChoicesSheet) { sheet in
+            ExternalLaunchChoiceSheet(
+                choices: sheet.choices,
+                onPick: { choice in
+                    viewModel.resolveExternalLaunchChoice(choice)
+                },
+                onCancel: {
+                    viewModel.cancelExternalLaunchChoice()
+                }
+            )
         }
         .sheet(isPresented: $viewModel.isShowingNewConnectionSheet) {
             ConnectionFormSheet(
@@ -180,6 +201,69 @@ struct ConnectionListView: View {
                 openWindow(id: WindowID.terminal, value: windowId)
                 viewModel.clearPendingTerminalWindow()
             }
+        }
+        .sheet(item: $viewModel.externalLaunchChoicesSheet) { sheet in
+            ExternalLaunchChoiceSheet(
+                choices: sheet.choices,
+                onPick: { choice in
+                    viewModel.resolveExternalLaunchChoice(choice)
+                },
+                onCancel: {
+                    viewModel.cancelExternalLaunchChoice()
+                }
+            )
+        }
+    }
+}
+
+// MARK: - External Launch Choice Sheet
+
+/// Shown when an external launch names a connection/bookmark that matches
+/// several saved entries; picking one resumes the launch.
+private struct ExternalLaunchChoiceSheet: View {
+    let choices: [ExternalLaunchChoice]
+    let onPick: (ExternalLaunchChoice) -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            List(choices) { choice in
+                Button {
+                    onPick(choice)
+                } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(choice.connection.name)
+                            .font(.headline)
+                        Text(choice.connection.connectionString)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+            .navigationTitle("Choose a Connection")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        onCancel()
+                    }
+                }
+            }
+            .padding()
+        }
+        .frame(minWidth: 360, minHeight: 240)
+    }
+}
+
+// MARK: - External Launch
+
+extension ConnectionListView {
+    /// Consumes whatever the AppDelegate has queued since last time and hands
+    /// it to the view model. Runs both at window appear (cold launch) and on
+    /// every poke notification (hot launch with a living main window).
+    private func consumeExternalLaunchQueue() {
+        for outcome in ExternalLaunchQueue.shared.drain() {
+            viewModel.handleExternalLaunch(outcome)
         }
     }
 }

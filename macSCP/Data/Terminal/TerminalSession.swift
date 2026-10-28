@@ -23,6 +23,9 @@ actor TerminalSession: TerminalSessionProtocol {
     private var ttyWriter: TTYStdinWriter?
     private var outputContinuation: AsyncStream<Data>.Continuation?
     private var currentSize: TerminalSize = .default
+    /// Consumed by startPTYSession: written into the PTY input buffer the
+    /// moment the channel is up, so the shell executes it before the prompt.
+    private var pendingInitialCommand: String?
 
     // Output stream for terminal data
     private var _outputStream: AsyncStream<Data>?
@@ -47,7 +50,8 @@ actor TerminalSession: TerminalSessionProtocol {
         port: Int,
         username: String,
         password: String,
-        terminalSize: TerminalSize
+        terminalSize: TerminalSize,
+        initialCommand: String?
     ) async throws {
         logInfo("Connecting terminal to \(username)@\(host):\(port) with password", category: .network)
 
@@ -55,6 +59,7 @@ actor TerminalSession: TerminalSessionProtocol {
         eventLoopGroup = group
         currentSize = terminalSize
         sessionEndedGracefully = false
+        pendingInitialCommand = initialCommand
 
         do {
             let normalizedHost = (host.lowercased() == "localhost") ? "127.0.0.1" : host
@@ -96,7 +101,8 @@ actor TerminalSession: TerminalSessionProtocol {
         username: String,
         privateKeyPath: String,
         passphrase: String?,
-        terminalSize: TerminalSize
+        terminalSize: TerminalSize,
+        initialCommand: String?
     ) async throws {
         logInfo("Connecting terminal to \(username)@\(host):\(port) with private key", category: .network)
 
@@ -104,6 +110,7 @@ actor TerminalSession: TerminalSessionProtocol {
         eventLoopGroup = group
         currentSize = terminalSize
         sessionEndedGracefully = false
+        pendingInitialCommand = initialCommand
 
         do {
             let normalizedHost = (host.lowercased() == "localhost") ? "127.0.0.1" : host
@@ -195,6 +202,13 @@ actor TerminalSession: TerminalSessionProtocol {
                     // Store the writer for sending input and resize
                     await self.setTTYWriter(ttyWriter)
 
+                    // Feed the start-directory command into the PTY input
+                    // buffer before the shell reads anything, so it executes
+                    // as if the user had typed it first.
+                    if let initialCommand = await self.takeInitialCommand() {
+                        try await ttyWriter.write(ByteBuffer(string: initialCommand))
+                    }
+
                     // Read output from the TTY and forward to the stream
                     for try await output in ttyOutput {
                         // Check for task cancellation
@@ -228,6 +242,12 @@ actor TerminalSession: TerminalSessionProtocol {
 
     private func setTTYWriter(_ writer: TTYStdinWriter) {
         ttyWriter = writer
+    }
+
+    private func takeInitialCommand() -> String? {
+        let command = pendingInitialCommand
+        pendingInitialCommand = nil
+        return command
     }
 
     private func sendOutput(_ data: Data) {

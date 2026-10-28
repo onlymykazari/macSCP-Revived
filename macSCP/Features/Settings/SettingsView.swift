@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import AppKit
 
 struct SettingsView: View {
     @State private var appLockManager = AppLockManager.shared
@@ -16,6 +17,7 @@ struct SettingsView: View {
 
     private enum SettingsPane: String, CaseIterable, Identifiable {
         case security
+        case urlScheme
         case backup
         case diagnostics
 
@@ -24,6 +26,7 @@ struct SettingsView: View {
         var label: String {
             switch self {
             case .security: return "Security"
+            case .urlScheme: return "URL Scheme"
             case .backup: return "Backup & Restore"
             case .diagnostics: return "Diagnostics"
             }
@@ -58,6 +61,9 @@ struct SettingsView: View {
                 .formStyle(.grouped)
                 .frame(width: 450)
                 .fixedSize(horizontal: false, vertical: true)
+
+            case .urlScheme:
+                URLSchemeSettingsPane()
 
             case .backup:
                 BackupView(viewModel: DependencyContainer.shared.makeBackupViewModel())
@@ -235,4 +241,89 @@ struct SettingsView: View {
 
 #Preview {
     SettingsView()
+}
+
+// MARK: - URL Scheme Pane
+
+/// Documents the macscp:// scheme and hands out copyable per-connection URLs.
+private struct URLSchemeSettingsPane: View {
+    @AppStorage(ExternalLaunchRequest.enabledDefaultsKey) private var externalLaunchEnabled = true
+    @State private var connections: [Connection] = []
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle(isOn: $externalLaunchEnabled) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Allow launching from URLs")
+                        Text("Other apps on this Mac can open saved connections through macscp:// links. Passwords are never part of a URL — macSCP looks them up itself.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } header: {
+                Text("Integration")
+            }
+
+            Section {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("macscp://open?connection=<name|id>&view=files|terminal&path=<dir>&new=1")
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                    Text("Use bookmark=<name> instead of connection to start from a saved remote path. path is optional (encode spaces as %20); view defaults to the file browser; new=1 forces a fresh window instead of bringing an already open one to the front.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Syntax")
+            }
+
+            Section {
+                if connections.isEmpty {
+                    Text("No saved connections yet.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(connections) { connection in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(connection.name)
+                                Text(connection.connectionString)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button("Copy URLs") {
+                                copyExample(for: connection)
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                    }
+                }
+            } header: {
+                Text("Examples")
+            } footer: {
+                Text("Copy URLs puts a file-browser and a terminal example for the connection on the clipboard.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .frame(width: 520)
+        .fixedSize(horizontal: false, vertical: true)
+        .task {
+            connections = (try? await DependencyContainer.shared.connectionRepository.fetchAll()) ?? []
+        }
+    }
+
+    private func copyExample(for connection: Connection) {
+        let examples = [
+            ExternalLaunchSupport.makeURL(connection: connection.name, view: .files)?.absoluteString,
+            ExternalLaunchSupport.makeURL(connection: connection.name, view: .terminal, path: "~")?.absoluteString
+        ]
+        .compactMap { $0 }
+        .joined(separator: "\n")
+
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(examples, forType: .string)
+    }
 }

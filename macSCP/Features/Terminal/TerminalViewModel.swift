@@ -95,6 +95,8 @@ final class TerminalViewModel {
 
         state = .connecting
 
+        let initialCommand = makeInitialCommand()
+
         do {
             if connectionData.authMethod == .password {
                 try await session.connect(
@@ -102,7 +104,8 @@ final class TerminalViewModel {
                     port: connectionData.port,
                     username: connectionData.username,
                     password: connectionData.password,
-                    terminalSize: currentSize
+                    terminalSize: currentSize,
+                    initialCommand: initialCommand
                 )
             } else if let keyPath = connectionData.privateKeyPath {
                 try await session.connect(
@@ -111,7 +114,8 @@ final class TerminalViewModel {
                     username: connectionData.username,
                     privateKeyPath: keyPath,
                     passphrase: connectionData.password.isEmpty ? nil : connectionData.password,
-                    terminalSize: currentSize
+                    terminalSize: currentSize,
+                    initialCommand: initialCommand
                 )
             }
 
@@ -128,6 +132,19 @@ final class TerminalViewModel {
             state = .error(appError)
             self.error = appError
         }
+    }
+
+    /// Converts the requested start directory into a command for the PTY
+    /// input buffer. An unusable path is logged and skipped rather than
+    /// blocking the connection.
+    private func makeInitialCommand() -> String? {
+        guard let path = connectionData.initialPath, !path.isEmpty else { return nil }
+
+        guard let command = ExternalLaunchSupport.terminalCDCommand(path: path) else {
+            logWarning("Terminal start path contains control characters, ignoring: \(path)", category: .ui)
+            return nil
+        }
+        return command
     }
 
     func disconnect() async {

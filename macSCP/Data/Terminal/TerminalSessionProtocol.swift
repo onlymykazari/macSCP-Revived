@@ -31,12 +31,15 @@ protocol TerminalSessionProtocol: Sendable {
     ///   - username: The username for authentication
     ///   - password: The password for authentication
     ///   - terminalSize: Initial terminal dimensions
+    ///   - initialCommand: Command written into the PTY input buffer as soon
+    ///     as it is established (e.g. a `cd` for the start directory)
     func connect(
         host: String,
         port: Int,
         username: String,
         password: String,
-        terminalSize: TerminalSize
+        terminalSize: TerminalSize,
+        initialCommand: String?
     ) async throws
 
     /// Connect to the server with private key authentication
@@ -47,13 +50,16 @@ protocol TerminalSessionProtocol: Sendable {
     ///   - privateKeyPath: Path to the private key file
     ///   - passphrase: Optional passphrase for the private key
     ///   - terminalSize: Initial terminal dimensions
+    ///   - initialCommand: Command written into the PTY input buffer as soon
+    ///     as it is established (e.g. a `cd` for the start directory)
     func connect(
         host: String,
         port: Int,
         username: String,
         privateKeyPath: String,
         passphrase: String?,
-        terminalSize: TerminalSize
+        terminalSize: TerminalSize,
+        initialCommand: String?
     ) async throws
 
     /// Send data to the terminal
